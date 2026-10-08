@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('utilisateurs', function (Blueprint $table) {
@@ -20,7 +21,7 @@ return new class extends Migration {
             $table->string('photo_path')->nullable();
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['tenant_id','telephone']);
+            $table->unique(['tenant_id', 'telephone']);
         });
 
         Schema::create('roles', function (Blueprint $table) {
@@ -30,7 +31,7 @@ return new class extends Migration {
             $table->string('nom', 100);
             $table->boolean('system_role')->default(false);
             $table->timestamps();
-            $table->unique(['tenant_id','code']);
+            $table->unique(['tenant_id', 'code']);
         });
 
         Schema::create('permissions', function (Blueprint $table) {
@@ -43,13 +44,13 @@ return new class extends Migration {
         Schema::create('role_permissions', function (Blueprint $table) {
             $table->foreignId('role_id')->constrained('roles')->cascadeOnDelete();
             $table->foreignId('permission_id')->constrained('permissions')->cascadeOnDelete();
-            $table->primary(['role_id','permission_id']);
+            $table->primary(['role_id', 'permission_id']);
         });
 
         Schema::create('utilisateur_roles', function (Blueprint $table) {
             $table->foreignId('utilisateur_id')->constrained('utilisateurs')->cascadeOnDelete();
             $table->foreignId('role_id')->constrained('roles')->cascadeOnDelete();
-            $table->primary(['utilisateur_id','role_id']);
+            $table->primary(['utilisateur_id', 'role_id']);
         });
     }
 

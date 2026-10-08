@@ -2,17 +2,34 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPublicId;
 use App\Models\Concerns\HasTenant;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Classe extends Model
 {
+    use HasPublicId;
     use HasTenant;
 
     protected $table = 'classes';
-    protected $guarded = [];
+
+    protected $fillable = [
+        'tenant_id',
+        'etablissement_id',
+        'annee_scolaire_id',
+        'cycle_id',
+        'degre_id',
+        'niveau_id',
+        'option_id',
+        'system_template_id',
+        'parallele',
+        'nom',
+        'code',
+        'titulaire_id',
+        'active',
+    ];
 
     protected $casts = ['active' => 'boolean'];
 
@@ -29,6 +46,11 @@ class Classe extends Model
     public function anneeScolaire(): BelongsTo
     {
         return $this->belongsTo(AnneeScolaire::class, 'annee_scolaire_id');
+    }
+
+    public function systemTemplate(): BelongsTo
+    {
+        return $this->belongsTo(SystemTemplateBulletin::class, 'system_template_id');
     }
 
     public function cycle(): BelongsTo
@@ -69,5 +91,10 @@ class Classe extends Model
     public function titulaire(): BelongsTo
     {
         return $this->belongsTo(Utilisateur::class, 'titulaire_id');
+    }
+
+    public function titulariats(): HasMany
+    {
+        return $this->hasMany(TitulaireClasse::class);
     }
 }

@@ -5,8 +5,8 @@ namespace App\Services\Bulletins;
 use App\Models\Classe;
 use App\Models\ModeleNode;
 use App\Models\ModelePeriode;
+use App\Models\Note;
 use App\Models\SuiviEncodageNote;
-use Illuminate\Support\Facades\DB;
 
 class EncodingProgressService
 {
@@ -14,13 +14,22 @@ class EncodingProgressService
     {
         $nombreEleves = $classe->inscriptions()->where('statut', 'ACTIF')->count();
 
-        $nombreNotes = DB::table('notes')
-            ->join('bulletins', 'notes.bulletin_id', '=', 'bulletins.id')
-            ->where('bulletins.classe_id', $classe->id)
-            ->where('notes.node_id', $node->id)
-            ->where('notes.periode_id', $periode->id)
-            ->whereNotNull('notes.valeur')
-            ->count();
+        $nombreNotes = Note::query()
+            ->recordedResults()
+            ->where('node_id', $node->id)
+            ->where('periode_id', $periode->id)
+            ->whereHas(
+                'bulletin',
+                fn ($reportCard) => $reportCard
+                    ->where('classe_id', $classe->id)
+                    ->whereHas(
+                        'inscription',
+                        fn ($enrollment) => $enrollment
+                            ->where('statut', 'ACTIF'),
+                    ),
+            )
+            ->distinct()
+            ->count('bulletin_id');
 
         $pourcentage = $nombreEleves > 0 ? round(($nombreNotes / $nombreEleves) * 100, 2) : 0;
 

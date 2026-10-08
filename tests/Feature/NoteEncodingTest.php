@@ -1,14 +1,13 @@
 <?php
 
-test('can encode note with validation and progress update', function () {
-    $response = $this->postJson('/api/v1/notes', [
-        'bulletin_id' => 1,
-        'node_id' => 1,
-        'periode_id' => 1,
-        'valeur' => 15,
-        'saisie_par' => 1,
-        'commentaire' => 'Test note',
-    ]);
+test('contextual note encoding requires authentication', function () {
+    $response = $this->putJson(
+        '/api/v1/me/attributions/1/creneaux/1/inscriptions/1/note',
+        [
+            'valeur' => 15,
+            'commentaire' => 'Test note',
+        ],
+    );
 
-    $response->assertStatus(401);
+    $response->assertUnauthorized();
 });

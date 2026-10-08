@@ -2,70 +2,90 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domains\Student\Services\ArchiveStudentService;
+use App\Domains\Student\Services\ReactivateStudentService;
+use App\Domains\Tenant\Contexts\EstablishmentContext;
+use App\Domains\Tenant\Contexts\TenantContext;
 use App\Http\Controllers\Controller;
-use App\Domains\Student\Contracts\ImportStudentsServiceInterface;
+use App\Http\Requests\Api\V1\PaginationRequest;
+use App\Http\Requests\Api\V1\Student\ArchiveStudentRequest;
+use App\Http\Requests\Api\V1\Student\EleveRequest;
+use App\Http\Requests\Api\V1\Student\ReactivateStudentRequest;
+use App\Http\Resources\Api\V1\EleveResource;
 use App\Models\Eleve;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
-class EleveController extends Controller
+final class EleveController extends Controller
 {
     public function __construct(
-        private ImportStudentsServiceInterface $importService
+        private TenantContext $tenantContext,
+        private EstablishmentContext $establishmentContext,
+        private ArchiveStudentService $archiveStudentService,
+        private ReactivateStudentService $reactivateStudentService,
     ) {}
 
-    public function index(): JsonResponse
+    public function index(PaginationRequest $request): JsonResponse
     {
-        $eleves = Eleve::with('tenant', 'etablissement')->get();
-        return response()->json($eleves);
+        $students = Eleve::query()
+            ->where('etablissement_id', $this->establishmentContext->id())
+            ->latest('id')
+            ->paginate($request->integer('per_page', 50));
+
+        return EleveResource::collection($students)->response();
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(EleveRequest $request): JsonResponse
     {
-        $request->validate([
-            'tenant_id' => 'required|integer|exists:tenants,id',
-            'etablissement_id' => 'required|integer|exists:etablissements,id',
-            'nom' => 'required|string',
-            'postnom' => 'nullable|string',
-            'prenom' => 'nullable|string',
-            'sexe' => 'nullable|string',
-            'date_naissance' => 'nullable|date',
+        $student = Eleve::query()->create([
+            ...$request->validated(),
+            'tenant_id' => $this->tenantContext->id(),
+            'etablissement_id' => $this->establishmentContext->id(),
         ]);
 
-        $eleve = Eleve::create($request->all());
-        return response()->json($eleve, 201);
+        return EleveResource::make($student)
+            ->response()
+            ->setStatusCode(201);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(int $eleve): JsonResponse
     {
-        $eleve = Eleve::with('tenant', 'etablissement', 'inscriptions.classe')->findOrFail($id);
-        return response()->json($eleve);
+        return EleveResource::make($this->resolveStudent($eleve))->response();
     }
 
-    public function update(Request $request, int $id): JsonResponse
+    public function update(EleveRequest $request, int $eleve): JsonResponse
     {
-        $eleve = Eleve::findOrFail($id);
-        $eleve->update($request->all());
-        return response()->json($eleve);
+        $student = $this->resolveStudent($eleve);
+        $student->update($request->validated());
+
+        return EleveResource::make($student->refresh())->response();
     }
 
-    public function destroy(int $id): JsonResponse
+    public function archive(ArchiveStudentRequest $request): JsonResponse
     {
-        $eleve = Eleve::findOrFail($id);
-        $eleve->delete();
-        return response()->json(['message' => 'Deleted successfully']);
+        $student = $this->archiveStudentService->archive(
+            $request->student(),
+            $request->actor(),
+            $request->archiveData(),
+        );
+
+        return EleveResource::make($student)->response();
     }
 
-    public function import(Request $request): JsonResponse
+    public function reactivate(ReactivateStudentRequest $request): JsonResponse
     {
-        $request->validate([
-            'data' => 'required|array',
-            'classe_id' => 'required|integer|exists:classes,id',
-            'annee_scolaire_id' => 'required|integer|exists:annees_scolaires,id',
-        ]);
+        $student = $this->reactivateStudentService->reactivate(
+            $request->student(),
+            $request->actor(),
+            $request->reactivateData(),
+        );
 
-        $result = $this->importService->import($request->data, $request->classe_id, $request->annee_scolaire_id);
+        return EleveResource::make($student)->response();
+    }
 
-        return response()->json($result);
+    private function resolveStudent(int $studentId): Eleve
+    {
+        return Eleve::query()
+            ->where('etablissement_id', $this->establishmentContext->id())
+            ->findOrFail($studentId);
     }
 }

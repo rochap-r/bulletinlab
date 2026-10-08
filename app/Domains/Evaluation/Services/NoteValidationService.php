@@ -32,16 +32,16 @@ class NoteValidationService
             })
             ->first();
 
-        if (!$node) {
-            throw new MaximumNotFoundException();
+        if (! $node) {
+            throw new MaximumNotFoundException;
         }
 
         $modele = ModeleMaximum::where('node_id', $node->id)
             ->where('periode_id', $periodeId)
             ->first();
 
-        if (!$modele) {
-            throw new MaximumNotFoundException();
+        if (! $modele) {
+            throw new MaximumNotFoundException;
         }
 
         return $modele->maxima;

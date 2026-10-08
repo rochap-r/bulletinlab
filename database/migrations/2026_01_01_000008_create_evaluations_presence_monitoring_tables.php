@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('types_evaluations_globales', function (Blueprint $table) {
@@ -23,7 +24,7 @@ return new class extends Migration {
             $table->string('valeur', 20)->nullable();
             $table->text('commentaire')->nullable();
             $table->timestamps();
-            $table->unique(['bulletin_id','type_evaluation_id','periode_id'], 'eval_unique_bulletin_type_periode');
+            $table->unique(['bulletin_id', 'type_evaluation_id', 'periode_id'], 'eval_unique_bulletin_type_periode');
         });
 
         Schema::create('baremes_appreciations', function (Blueprint $table) {
@@ -35,7 +36,7 @@ return new class extends Migration {
             $table->unsignedInteger('ordre')->default(1);
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['tenant_id','type','code']);
+            $table->unique(['tenant_id', 'type', 'code']);
         });
 
         Schema::create('presences_eleves', function (Blueprint $table) {
@@ -47,12 +48,12 @@ return new class extends Migration {
             $table->foreignId('inscription_id')->constrained('inscriptions')->cascadeOnDelete();
             $table->foreignId('periode_id')->nullable()->constrained('modele_periodes')->nullOnDelete();
             $table->date('date_presence');
-            $table->enum('moment', ['JOURNEE','MATIN','APRES_MIDI'])->default('JOURNEE');
-            $table->enum('statut', ['PRESENT','ABSENT','RETARD','JUSTIFIE'])->default('PRESENT');
+            $table->enum('moment', ['JOURNEE', 'MATIN', 'APRES_MIDI'])->default('JOURNEE');
+            $table->enum('statut', ['PRESENT', 'ABSENT', 'RETARD', 'JUSTIFIE'])->default('PRESENT');
             $table->text('observation')->nullable();
             $table->foreignId('saisi_par')->nullable()->constrained('utilisateurs')->nullOnDelete();
             $table->timestamps();
-            $table->unique(['inscription_id','date_presence','moment'], 'unique_presence_eleve_jour_moment');
+            $table->unique(['inscription_id', 'date_presence', 'moment'], 'unique_presence_eleve_jour_moment');
         });
 
         Schema::create('suivis_encodage_notes', function (Blueprint $table) {
@@ -66,10 +67,10 @@ return new class extends Migration {
             $table->unsignedInteger('nombre_eleves')->default(0);
             $table->unsignedInteger('nombre_notes_saisies')->default(0);
             $table->decimal('pourcentage_avancement', 5, 2)->default(0);
-            $table->enum('statut', ['NON_COMMENCE','EN_COURS','TERMINE','EN_RETARD','VERROUILLE'])->default('NON_COMMENCE');
+            $table->enum('statut', ['NON_COMMENCE', 'EN_COURS', 'TERMINE', 'EN_RETARD', 'VERROUILLE'])->default('NON_COMMENCE');
             $table->timestamp('derniere_saisie_at')->nullable();
             $table->timestamps();
-            $table->unique(['classe_id','node_id','periode_id'], 'suivi_encodage_unique');
+            $table->unique(['classe_id', 'node_id', 'periode_id'], 'suivi_encodage_unique');
         });
     }
 

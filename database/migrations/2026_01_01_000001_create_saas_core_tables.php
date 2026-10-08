@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('tenants', function (Blueprint $table) {
@@ -34,7 +35,7 @@ return new class extends Migration {
             $table->string('signature_directeur_path')->nullable();
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->index(['tenant_id','actif']);
+            $table->index(['tenant_id', 'actif']);
         });
 
         Schema::create('plans', function (Blueprint $table) {
@@ -54,12 +55,12 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('tenant_id')->constrained()->cascadeOnDelete();
             $table->foreignId('plan_id')->constrained('plans')->restrictOnDelete();
-            $table->enum('statut', ['ESSAI','ACTIF','PAST_DUE','SUSPENDU','ANNULE'])->default('ESSAI');
+            $table->enum('statut', ['ESSAI', 'ACTIF', 'PAST_DUE', 'SUSPENDU', 'ANNULE'])->default('ESSAI');
             $table->date('date_debut');
             $table->date('date_fin')->nullable();
             $table->date('trial_ends_at')->nullable();
             $table->timestamps();
-            $table->index(['tenant_id','statut']);
+            $table->index(['tenant_id', 'statut']);
         });
 
         Schema::create('paiements', function (Blueprint $table) {
@@ -70,10 +71,10 @@ return new class extends Migration {
             $table->string('devise', 10)->default('USD');
             $table->string('methode', 50)->nullable();
             $table->string('reference_externe', 150)->nullable();
-            $table->enum('statut', ['EN_ATTENTE','SUCCES','ECHEC','ANNULE'])->default('EN_ATTENTE');
+            $table->enum('statut', ['EN_ATTENTE', 'SUCCES', 'ECHEC', 'ANNULE'])->default('EN_ATTENTE');
             $table->timestamp('paid_at')->nullable();
             $table->timestamps();
-            $table->index(['tenant_id','statut']);
+            $table->index(['tenant_id', 'statut']);
         });
     }
 

@@ -1,7 +1,7 @@
 <?php
 
-test('can get students with period and subject filters', function () {
-    $response = $this->getJson('/api/v1/classes/1/students?periode_id=1&matiere_id=1');
+test('can get class enrollments', function () {
+    $response = $this->getJson('/api/v1/classes/1/inscriptions');
 
     $response->assertStatus(401);
 });

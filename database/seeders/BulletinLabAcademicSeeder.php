@@ -41,18 +41,18 @@ class BulletinLabAcademicSeeder extends Seeder
         $degreIds = DB::table('ref_degres')->pluck('id', 'code');
 
         $niveaux = [
-            ['cycle'=>'PRIMAIRE','degre'=>'ELEMENTAIRE','code'=>'PRIMAIRE_1','nom'=>'1ère Primaire','numero'=>1,'ordre'=>1],
-            ['cycle'=>'PRIMAIRE','degre'=>'ELEMENTAIRE','code'=>'PRIMAIRE_2','nom'=>'2ème Primaire','numero'=>2,'ordre'=>2],
-            ['cycle'=>'PRIMAIRE','degre'=>'MOYEN','code'=>'PRIMAIRE_3','nom'=>'3ème Primaire','numero'=>3,'ordre'=>3],
-            ['cycle'=>'PRIMAIRE','degre'=>'MOYEN','code'=>'PRIMAIRE_4','nom'=>'4ème Primaire','numero'=>4,'ordre'=>4],
-            ['cycle'=>'PRIMAIRE','degre'=>'TERMINAL_PRIMAIRE','code'=>'PRIMAIRE_5','nom'=>'5ème Primaire','numero'=>5,'ordre'=>5],
-            ['cycle'=>'PRIMAIRE','degre'=>'TERMINAL_PRIMAIRE','code'=>'PRIMAIRE_6','nom'=>'6ème Primaire','numero'=>6,'ordre'=>6],
-            ['cycle'=>'EB','degre'=>'CTEB','code'=>'CTEB_7','nom'=>'7ème EB','numero'=>7,'ordre'=>7],
-            ['cycle'=>'EB','degre'=>'CTEB','code'=>'CTEB_8','nom'=>'8ème EB','numero'=>8,'ordre'=>8],
-            ['cycle'=>'HUMANITES','degre'=>'HUMANITES_GENERALES','code'=>'HUM_1','nom'=>'1ère Humanités','numero'=>1,'ordre'=>1],
-            ['cycle'=>'HUMANITES','degre'=>'HUMANITES_GENERALES','code'=>'HUM_2','nom'=>'2ème Humanités','numero'=>2,'ordre'=>2],
-            ['cycle'=>'HUMANITES','degre'=>'HUMANITES_GENERALES','code'=>'HUM_3','nom'=>'3ème Humanités','numero'=>3,'ordre'=>3],
-            ['cycle'=>'HUMANITES','degre'=>'HUMANITES_GENERALES','code'=>'HUM_4','nom'=>'4ème Humanités','numero'=>4,'ordre'=>4],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'ELEMENTAIRE', 'code' => 'PRIMAIRE_1', 'nom' => '1ère Primaire', 'numero' => 1, 'ordre' => 1],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'ELEMENTAIRE', 'code' => 'PRIMAIRE_2', 'nom' => '2ème Primaire', 'numero' => 2, 'ordre' => 2],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'MOYEN', 'code' => 'PRIMAIRE_3', 'nom' => '3ème Primaire', 'numero' => 3, 'ordre' => 3],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'MOYEN', 'code' => 'PRIMAIRE_4', 'nom' => '4ème Primaire', 'numero' => 4, 'ordre' => 4],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'TERMINAL_PRIMAIRE', 'code' => 'PRIMAIRE_5', 'nom' => '5ème Primaire', 'numero' => 5, 'ordre' => 5],
+            ['cycle' => 'PRIMAIRE', 'degre' => 'TERMINAL_PRIMAIRE', 'code' => 'PRIMAIRE_6', 'nom' => '6ème Primaire', 'numero' => 6, 'ordre' => 6],
+            ['cycle' => 'EB', 'degre' => 'CTEB', 'code' => 'CTEB_7', 'nom' => '7ème EB', 'numero' => 7, 'ordre' => 7],
+            ['cycle' => 'EB', 'degre' => 'CTEB', 'code' => 'CTEB_8', 'nom' => '8ème EB', 'numero' => 8, 'ordre' => 8],
+            ['cycle' => 'HUMANITES', 'degre' => 'HUMANITES_GENERALES', 'code' => 'HUM_1', 'nom' => '1ère Humanités', 'numero' => 1, 'ordre' => 1],
+            ['cycle' => 'HUMANITES', 'degre' => 'HUMANITES_GENERALES', 'code' => 'HUM_2', 'nom' => '2ème Humanités', 'numero' => 2, 'ordre' => 2],
+            ['cycle' => 'HUMANITES', 'degre' => 'HUMANITES_GENERALES', 'code' => 'HUM_3', 'nom' => '3ème Humanités', 'numero' => 3, 'ordre' => 3],
+            ['cycle' => 'HUMANITES', 'degre' => 'HUMANITES_GENERALES', 'code' => 'HUM_4', 'nom' => '4ème Humanités', 'numero' => 4, 'ordre' => 4],
         ];
 
         foreach ($niveaux as $niveau) {
@@ -71,13 +71,13 @@ class BulletinLabAcademicSeeder extends Seeder
         }
 
         $options = [
-            ['cycle'=>'HUMANITES','code'=>'COMMERCIALE_GESTION','nom'=>'Commerciale & Gestion'],
-            ['cycle'=>'HUMANITES','code'=>'SCIENTIFIQUE_MATH_PHYSIQUE','nom'=>'Scientifique Mathématiques-Physique'],
-            ['cycle'=>'HUMANITES','code'=>'PEDAGOGIE_GENERALE','nom'=>'Pédagogie Générale'],
-            ['cycle'=>'HUMANITES','code'=>'ELECTRICITE_GENERALE','nom'=>'Electricité Générale'],
-            ['cycle'=>'HUMANITES','code'=>'CONSTRUCTION','nom'=>'Construction'],
-            ['cycle'=>'HUMANITES','code'=>'MECANIQUE_GENERALE','nom'=>'Mécanique Générale'],
-            ['cycle'=>'HUMANITES','code'=>'MECANIQUE_AUTO','nom'=>'Mécanique Automobile'],
+            ['cycle' => 'HUMANITES', 'code' => 'COMMERCIALE_GESTION', 'nom' => 'Commerciale & Gestion'],
+            ['cycle' => 'HUMANITES', 'code' => 'SCIENTIFIQUE_MATH_PHYSIQUE', 'nom' => 'Scientifique Mathématiques-Physique'],
+            ['cycle' => 'HUMANITES', 'code' => 'PEDAGOGIE_GENERALE', 'nom' => 'Pédagogie Générale'],
+            ['cycle' => 'HUMANITES', 'code' => 'ELECTRICITE_GENERALE', 'nom' => 'Electricité Générale'],
+            ['cycle' => 'HUMANITES', 'code' => 'CONSTRUCTION', 'nom' => 'Construction'],
+            ['cycle' => 'HUMANITES', 'code' => 'MECANIQUE_GENERALE', 'nom' => 'Mécanique Générale'],
+            ['cycle' => 'HUMANITES', 'code' => 'MECANIQUE_AUTO', 'nom' => 'Mécanique Automobile'],
         ];
 
         foreach ($options as $option) {
@@ -88,16 +88,16 @@ class BulletinLabAcademicSeeder extends Seeder
         }
 
         $matieres = [
-            'Religion','Education à la Vie','Ed. civ. & morale','Education physique & sportive','Géographie économique',
-            'Droit','Correspondance commerciale anglaise','Correspondance commerciale française','Fiscalité',
-            'Mathématiques financières','Mathématiques générales','Activités complémentaires','Anglais',
-            'Documentation commerciale','Français','Informatique','Comptabilité générale','Pratique professionnelle',
-            'Opérations des banques et crédits','Economie politique','Entrepreneuriat','Déontologie professionnelle',
-            'Finances publiques','Economie de développement','Organisation des entreprises','Comptabilité analytique',
-            'Arithmétique','Statistique','Géométrie','Algèbre','Anatomie','Botanique','Zoologie','Nutrition',
-            'Sciences Physiques','Technologie','TIC','Dessin','Musique','Chimie','Physique','Biologie générale',
-            'Expression orale','Expression écrite','Vocabulaire','Numération','Opérations','Problèmes',
-            'Mesures des grandeurs','Formes géométriques','Sciences d’éveil','Arts plastiques','Arts dramatiques',
+            'Religion', 'Education à la Vie', 'Ed. civ. & morale', 'Education physique & sportive', 'Géographie économique',
+            'Droit', 'Correspondance commerciale anglaise', 'Correspondance commerciale française', 'Fiscalité',
+            'Mathématiques financières', 'Mathématiques générales', 'Activités complémentaires', 'Anglais',
+            'Documentation commerciale', 'Français', 'Informatique', 'Comptabilité générale', 'Pratique professionnelle',
+            'Opérations des banques et crédits', 'Economie politique', 'Entrepreneuriat', 'Déontologie professionnelle',
+            'Finances publiques', 'Economie de développement', 'Organisation des entreprises', 'Comptabilité analytique',
+            'Arithmétique', 'Statistique', 'Géométrie', 'Algèbre', 'Anatomie', 'Botanique', 'Zoologie', 'Nutrition',
+            'Sciences Physiques', 'Technologie', 'TIC', 'Dessin', 'Musique', 'Chimie', 'Physique', 'Biologie générale',
+            'Expression orale', 'Expression écrite', 'Vocabulaire', 'Numération', 'Opérations', 'Problèmes',
+            'Mesures des grandeurs', 'Formes géométriques', 'Sciences d’éveil', 'Arts plastiques', 'Arts dramatiques',
         ];
 
         foreach ($matieres as $matiere) {

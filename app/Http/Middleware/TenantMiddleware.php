@@ -2,14 +2,21 @@
 
 namespace App\Http\Middleware;
 
+use App\Domains\Tenant\Contexts\TenantContext;
 use App\Domains\Tenant\Exceptions\TenantNotFoundException;
 use App\Models\Tenant;
+use App\Models\Utilisateur;
 use Closure;
 use Illuminate\Http\Request;
+use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
 class TenantMiddleware
 {
+    public function __construct(
+        private TenantContext $tenantContext,
+    ) {}
+
     /**
      * Handle an incoming request.
      *
@@ -19,18 +26,32 @@ class TenantMiddleware
     {
         $user = $request->user();
 
-        if (!$user || !$user->tenant_id) {
-            throw new TenantNotFoundException();
+        if (! $user instanceof Utilisateur || ! $user->tenant_id) {
+            throw new TenantNotFoundException;
         }
 
-        $tenant = Tenant::find($user->tenant_id);
+        $accessToken = $user->currentAccessToken();
 
-        if (!$tenant) {
-            throw new TenantNotFoundException();
+        if (! $accessToken instanceof PersonalAccessToken
+            || ! $accessToken->can("tenant:{$user->tenant_id}")) {
+            throw new TenantNotFoundException;
         }
 
-        app()->instance('tenant', $tenant);
+        $tenant = Tenant::query()
+            ->whereKey($user->tenant_id)
+            ->whereIn('statut', ['EN_ATTENTE', 'ESSAI', 'ACTIF'])
+            ->first();
 
-        return $next($request);
+        if (! $tenant) {
+            throw new TenantNotFoundException;
+        }
+
+        $this->tenantContext->set($tenant);
+
+        try {
+            return $next($request);
+        } finally {
+            $this->tenantContext->clear();
+        }
     }
 }

@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('attributions_cours', function (Blueprint $table) {
@@ -18,7 +19,7 @@ return new class extends Migration {
             $table->date('date_fin')->nullable();
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['classe_id','node_id','enseignant_id']);
+            $table->unique(['classe_id', 'node_id', 'enseignant_id']);
         });
 
         Schema::create('eleves', function (Blueprint $table) {
@@ -29,7 +30,7 @@ return new class extends Migration {
             $table->string('nom', 100);
             $table->string('postnom', 100)->nullable();
             $table->string('prenom', 100)->nullable();
-            $table->enum('sexe', ['M','F'])->nullable();
+            $table->enum('sexe', ['M', 'F'])->nullable();
             $table->string('lieu_naissance', 120)->nullable();
             $table->date('date_naissance')->nullable();
             $table->string('nom_pere', 150)->nullable();
@@ -47,10 +48,10 @@ return new class extends Migration {
             $table->foreignId('classe_id')->constrained('classes')->cascadeOnDelete();
             $table->foreignId('annee_scolaire_id')->constrained('annees_scolaires')->cascadeOnDelete();
             $table->string('numero_inscription', 80)->nullable();
-            $table->enum('statut', ['ACTIF','ABANDON','TRANSFERE','EXCLU'])->default('ACTIF');
+            $table->enum('statut', ['ACTIF', 'ABANDON', 'TRANSFERE', 'EXCLU'])->default('ACTIF');
             $table->date('date_inscription')->nullable();
             $table->timestamps();
-            $table->unique(['eleve_id','annee_scolaire_id']);
+            $table->unique(['eleve_id', 'annee_scolaire_id']);
         });
 
         Schema::create('bulletins', function (Blueprint $table) {
@@ -64,17 +65,17 @@ return new class extends Migration {
             $table->decimal('total_maxima', 10, 2)->nullable();
             $table->decimal('pourcentage', 6, 2)->nullable();
             $table->string('mention', 100)->nullable();
-            $table->enum('decision_proposee', ['PASSE','DOUBLE','ECHOUE','REPECHAGE','REORIENTE','DIPLOME','AUCUNE'])->nullable();
+            $table->enum('decision_proposee', ['PASSE', 'DOUBLE', 'ECHOUE', 'REPECHAGE', 'REORIENTE', 'DIPLOME', 'AUCUNE'])->nullable();
             $table->unsignedInteger('rang')->nullable();
             $table->unsignedInteger('nombre_eleves_classe')->nullable();
-            $table->enum('decision_statut', ['EN_COURS','PASSE','DOUBLE','ECHOUE','REPECHAGE','REORIENTE','DIPLOME'])->default('EN_COURS');
+            $table->enum('decision_statut', ['EN_COURS', 'PASSE', 'DOUBLE', 'ECHOUE', 'REPECHAGE', 'REORIENTE', 'DIPLOME'])->default('EN_COURS');
             $table->string('lieu_deliberation', 120)->nullable();
             $table->date('date_deliberation')->nullable();
             $table->text('remarque_finale')->nullable();
             $table->string('pdf_path')->nullable();
             $table->boolean('verrouille')->default(false);
             $table->timestamps();
-            $table->unique(['inscription_id','modele_bulletin_id']);
+            $table->unique(['inscription_id', 'modele_bulletin_id']);
         });
 
         Schema::create('notes', function (Blueprint $table) {
@@ -88,7 +89,7 @@ return new class extends Migration {
             $table->timestamp('date_saisie')->nullable();
             $table->text('commentaire')->nullable();
             $table->timestamps();
-            $table->unique(['bulletin_id','node_id','periode_id']);
+            $table->unique(['bulletin_id', 'node_id', 'periode_id']);
         });
 
         Schema::create('notes_historiques', function (Blueprint $table) {

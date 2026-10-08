@@ -19,7 +19,7 @@ class PeriodeOuverteMiddleware
         $periodeId = $request->input('periode_id') ?? $request->route('periodeId');
         $classeId = $request->input('classe_id') ?? $request->route('classeId');
 
-        if (!$periodeId || !$classeId) {
+        if (! $periodeId || ! $classeId) {
             return $next($request);
         }
 

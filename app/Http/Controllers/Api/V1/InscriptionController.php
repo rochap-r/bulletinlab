@@ -2,50 +2,82 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domains\Student\Services\EnrollmentService;
+use App\Domains\Student\Services\ExitEnrollmentService;
+use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\PaginationRequest;
+use App\Http\Requests\Api\V1\Student\ExitEnrollmentRequest;
+use App\Http\Requests\Api\V1\Student\InscriptionRequest;
+use App\Http\Resources\Api\V1\InscriptionResource;
+use App\Models\Classe;
 use App\Models\Inscription;
-use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
-class InscriptionController extends Controller
+final class InscriptionController extends Controller
 {
-    public function index(): JsonResponse
+    public function __construct(
+        private EnrollmentService $enrollmentService,
+        private ExitEnrollmentService $exitEnrollmentService,
+        private EstablishmentContext $establishmentContext,
+    ) {}
+
+    public function index(PaginationRequest $request, int $classe): JsonResponse
     {
-        $inscriptions = Inscription::with('tenant', 'eleve', 'classe', 'anneeScolaire')->get();
-        return response()->json($inscriptions);
+        $resolvedClass = $this->resolveClass($classe);
+        $enrollments = Inscription::query()
+            ->where('classe_id', $resolvedClass->id)
+            ->with('eleve')
+            ->latest('id')
+            ->paginate($request->integer('per_page', 50));
+
+        return InscriptionResource::collection($enrollments)->response();
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(InscriptionRequest $request, int $classe): JsonResponse
     {
-        $request->validate([
-            'tenant_id' => 'required|integer|exists:tenants,id',
-            'eleve_id' => 'required|integer|exists:eleves,id',
-            'classe_id' => 'required|integer|exists:classes,id',
-            'annee_scolaire_id' => 'required|integer|exists:annees_scolaires,id',
-            'statut' => 'nullable|string',
-        ]);
+        $resolvedClass = $this->resolveClass($classe);
+        $enrollment = $this->enrollmentService->enroll(
+            $resolvedClass,
+            $request->enrollmentData(),
+        );
 
-        $inscription = Inscription::create($request->all());
-        return response()->json($inscription, 201);
+        return InscriptionResource::make($enrollment)
+            ->response()
+            ->setStatusCode(201);
     }
 
-    public function show(int $id): JsonResponse
+    public function show(int $inscription): JsonResponse
     {
-        $inscription = Inscription::with('tenant', 'eleve', 'classe', 'anneeScolaire')->findOrFail($id);
-        return response()->json($inscription);
+        $enrollment = Inscription::query()
+            ->whereHas(
+                'classe',
+                fn ($query) => $query->where(
+                    'etablissement_id',
+                    $this->establishmentContext->id(),
+                ),
+            )
+            ->with('eleve')
+            ->findOrFail($inscription);
+
+        return InscriptionResource::make($enrollment)->response();
     }
 
-    public function update(Request $request, int $id): JsonResponse
+    public function recordExit(ExitEnrollmentRequest $request): JsonResponse
     {
-        $inscription = Inscription::findOrFail($id);
-        $inscription->update($request->all());
-        return response()->json($inscription);
+        $enrollment = $this->exitEnrollmentService->recordExit(
+            $request->enrollment(),
+            $request->actor(),
+            $request->exitData(),
+        );
+
+        return InscriptionResource::make($enrollment)->response();
     }
 
-    public function destroy(int $id): JsonResponse
+    private function resolveClass(int $classId): Classe
     {
-        $inscription = Inscription::findOrFail($id);
-        $inscription->delete();
-        return response()->json(['message' => 'Deleted successfully']);
+        return Classe::query()
+            ->where('etablissement_id', $this->establishmentContext->id())
+            ->findOrFail($classId);
     }
 }

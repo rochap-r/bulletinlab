@@ -2,17 +2,43 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPublicId;
 use App\Models\Concerns\HasTenant;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Eleve extends Model
 {
+    use HasPublicId;
     use HasTenant;
 
     protected $table = 'eleves';
-    protected $guarded = [];
+
+    protected $fillable = [
+        'tenant_id',
+        'etablissement_id',
+        'num_permanent',
+        'nom',
+        'postnom',
+        'prenom',
+        'sexe',
+        'lieu_naissance',
+        'date_naissance',
+        'nom_pere',
+        'nom_mere',
+        'telephone_parent',
+        'adresse',
+        'actif',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'actif' => 'boolean',
+        ];
+    }
 
     public function tenant(): BelongsTo
     {
@@ -27,5 +53,14 @@ class Eleve extends Model
     public function inscriptions(): HasMany
     {
         return $this->hasMany(Inscription::class);
+    }
+
+    protected function nomComplet(): Attribute
+    {
+        return Attribute::get(
+            fn (): string => collect([$this->nom, $this->postnom, $this->prenom])
+                ->filter()
+                ->implode(' '),
+        );
     }
 }

@@ -2,7 +2,7 @@
 
 use Illuminate\Http\UploadedFile;
 
-test('can import notes from file', function () {
+test('legacy global note import route is retired', function () {
     $file = UploadedFile::fake()->create('notes.csv', 100);
 
     $response = $this->postJson('/api/v1/notes/import', [
@@ -12,5 +12,5 @@ test('can import notes from file', function () {
         'periode_id' => 1,
     ]);
 
-    $response->assertStatus(401);
+    $response->assertNotFound();
 });

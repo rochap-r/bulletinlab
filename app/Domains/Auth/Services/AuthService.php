@@ -3,52 +3,56 @@
 namespace App\Domains\Auth\Services;
 
 use App\Domains\Auth\Contracts\AuthServiceInterface;
+use App\Domains\Auth\DTOs\AuthenticatedSession;
+use App\Domains\Auth\DTOs\LoginData;
 use App\Domains\Auth\Exceptions\AuthenticationException;
+use App\Models\Tenant;
 use App\Models\Utilisateur;
-use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Auth;
+use Illuminate\Contracts\Hashing\Hasher;
+use Laravel\Sanctum\PersonalAccessToken;
 
 class AuthService implements AuthServiceInterface
 {
-    public function login(string $telephone, string $password): array
-    {
-        $user = Utilisateur::where('telephone', $telephone)->first();
+    private const DUMMY_PASSWORD_HASH = '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2uheWG/igi.';
 
-        if (!$user || !Hash::check($password, $user->mot_de_passe, [])) {
+    public function __construct(
+        private Hasher $hasher,
+    ) {}
+
+    public function login(LoginData $data): AuthenticatedSession
+    {
+        $tenant = Tenant::query()
+            ->where('slug', $data->tenantSlug)
+            ->whereIn('statut', ['EN_ATTENTE', 'ESSAI', 'ACTIF'])
+            ->first();
+
+        $utilisateur = Utilisateur::query()
+            ->where('tenant_id', $tenant?->id ?? 0)
+            ->where('telephone', $data->identifiant)
+            ->first();
+
+        $passwordMatches = $this->hasher->check(
+            $data->password,
+            $utilisateur?->mot_de_passe ?? self::DUMMY_PASSWORD_HASH,
+        );
+
+        if (! $tenant || ! $utilisateur || ! $utilisateur->actif || ! $passwordMatches) {
             throw new AuthenticationException('Invalid credentials');
         }
 
-        if (!$user->actif) {
-            throw new AuthenticationException('Account is inactive');
+        $accessToken = $utilisateur
+            ->createToken('tenant-auth', ["tenant:{$tenant->id}"])
+            ->plainTextToken;
+
+        return new AuthenticatedSession($utilisateur, $accessToken);
+    }
+
+    public function logout(Utilisateur $utilisateur): void
+    {
+        $accessToken = $utilisateur->currentAccessToken();
+
+        if ($accessToken instanceof PersonalAccessToken) {
+            $accessToken->delete();
         }
-
-        $token = $user->createToken('auth-token')->plainTextToken;
-
-        return [
-            'user' => $user,
-            'token' => $token,
-        ];
-    }
-
-    public function register(array $data): Utilisateur
-    {
-        $user = Utilisateur::create([
-            'tenant_id' => $data['tenant_id'],
-            'etablissement_id' => $data['etablissement_id'] ?? null,
-            'nom' => $data['nom'],
-            'postnom' => $data['postnom'] ?? null,
-            'prenom' => $data['prenom'] ?? null,
-            'email' => $data['email'] ?? null,
-            'telephone' => $data['telephone'],
-            'mot_de_passe' => Hash::make($data['password']),
-            'actif' => true,
-        ]);
-
-        return $user;
-    }
-
-    public function logout(): void
-    {
-        Auth::user()->tokens()->delete();
     }
 }

@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('calendriers_scolaires', function (Blueprint $table) {
@@ -24,14 +25,14 @@ return new class extends Migration {
             $table->foreignId('calendrier_scolaire_id')->constrained('calendriers_scolaires')->cascadeOnDelete();
             $table->string('code', 60);
             $table->string('nom', 150);
-            $table->enum('type_periode', ['PERIODE','EXAMEN','SEMESTRE','TRIMESTRE','CONGE','DELIBERATION','PROCLAMATION']);
+            $table->enum('type_periode', ['PERIODE', 'EXAMEN', 'SEMESTRE', 'TRIMESTRE', 'CONGE', 'DELIBERATION', 'PROCLAMATION']);
             $table->date('date_debut');
             $table->date('date_fin');
             $table->unsignedInteger('ordre')->default(1);
             $table->boolean('saisie_notes_ouverte')->default(false);
             $table->boolean('periode_active')->default(false);
             $table->timestamps();
-            $table->unique(['calendrier_scolaire_id','code']);
+            $table->unique(['calendrier_scolaire_id', 'code']);
         });
 
         Schema::create('annees_scolaires', function (Blueprint $table) {
@@ -44,7 +45,7 @@ return new class extends Migration {
             $table->boolean('active')->default(false);
             $table->boolean('cloturee')->default(false);
             $table->timestamps();
-            $table->unique(['tenant_id','libelle']);
+            $table->unique(['tenant_id', 'libelle']);
         });
 
         Schema::create('annee_periode_mappings', function (Blueprint $table) {
@@ -55,7 +56,7 @@ return new class extends Migration {
             $table->boolean('saisie_ouverte')->default(false);
             $table->boolean('verrouillee')->default(false);
             $table->timestamps();
-            $table->unique(['annee_scolaire_id','code_periode_template'], 'annee_template_period_unique');
+            $table->unique(['annee_scolaire_id', 'code_periode_template'], 'annee_template_period_unique');
         });
 
         Schema::create('tenant_cycles_actifs', function (Blueprint $table) {
@@ -65,7 +66,7 @@ return new class extends Migration {
             $table->foreignId('cycle_id')->constrained('ref_cycles')->restrictOnDelete();
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['tenant_id','annee_scolaire_id','cycle_id']);
+            $table->unique(['tenant_id', 'annee_scolaire_id', 'cycle_id']);
         });
     }
 

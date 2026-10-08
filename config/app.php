@@ -67,6 +67,11 @@ return [
 
     'timezone' => 'UTC',
 
+    'business_timezone' => env(
+        'BUSINESS_TIMEZONE',
+        'Africa/Lubumbashi',
+    ),
+
     /*
     |--------------------------------------------------------------------------
     | Application Locale Configuration

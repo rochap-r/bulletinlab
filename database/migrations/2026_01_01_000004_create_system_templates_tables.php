@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('system_layouts_bulletin', function (Blueprint $table) {
@@ -35,12 +36,12 @@ return new class extends Migration {
             $table->foreignId('niveau_min_id')->nullable()->constrained('ref_niveaux')->nullOnDelete();
             $table->foreignId('niveau_max_id')->nullable()->constrained('ref_niveaux')->nullOnDelete();
             $table->foreignId('layout_id')->constrained('system_layouts_bulletin')->restrictOnDelete();
-            $table->enum('type_decoupage', ['TRIMESTRIEL','SEMESTRIEL','PERSONNALISE']);
+            $table->enum('type_decoupage', ['TRIMESTRIEL', 'SEMESTRIEL', 'PERSONNALISE']);
             $table->decimal('total_general_maxima', 10, 2)->nullable();
             $table->string('version', 30)->default('2024-2025');
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->index(['cycle_id','option_id','actif']);
+            $table->index(['cycle_id', 'option_id', 'actif']);
         });
 
         Schema::create('system_template_blocs', function (Blueprint $table) {
@@ -51,14 +52,14 @@ return new class extends Migration {
             $table->boolean('actif')->default(true);
             $table->json('configuration')->nullable();
             $table->timestamps();
-            $table->unique(['template_id','bloc_id']);
+            $table->unique(['template_id', 'bloc_id']);
         });
 
         Schema::create('system_template_nodes', function (Blueprint $table) {
             $table->id();
             $table->foreignId('template_id')->constrained('system_templates_bulletin')->cascadeOnDelete();
             $table->foreignId('parent_id')->nullable()->constrained('system_template_nodes')->cascadeOnDelete();
-            $table->enum('type_node', ['DOMAINE','SOUS_DOMAINE','RUBRIQUE','GROUPE_MAXIMA','MATIERE','SOUS_TOTAL']);
+            $table->enum('type_node', ['DOMAINE', 'SOUS_DOMAINE', 'RUBRIQUE', 'GROUPE_MAXIMA', 'MATIERE', 'SOUS_TOTAL']);
             $table->foreignId('matiere_id')->nullable()->constrained('ref_matieres')->nullOnDelete();
             $table->string('libelle', 200);
             $table->unsignedInteger('ordre')->default(1);
@@ -67,7 +68,7 @@ return new class extends Migration {
             $table->boolean('obligatoire')->default(true);
             $table->json('metadata')->nullable();
             $table->timestamps();
-            $table->index(['template_id','parent_id','ordre']);
+            $table->index(['template_id', 'parent_id', 'ordre']);
         });
 
         Schema::create('system_template_periodes', function (Blueprint $table) {
@@ -76,14 +77,14 @@ return new class extends Migration {
             $table->foreignId('parent_id')->nullable()->constrained('system_template_periodes')->nullOnDelete();
             $table->string('code', 60);
             $table->string('nom', 120);
-            $table->enum('type_periode', ['PERIODE','EXAMEN','TRIMESTRE','SEMESTRE','TOTAL','REPECHAGE','EXAMEN_ETAT','ENAFEP','TENASOSP']);
+            $table->enum('type_periode', ['PERIODE', 'EXAMEN', 'TRIMESTRE', 'SEMESTRE', 'TOTAL', 'REPECHAGE', 'EXAMEN_ETAT', 'ENAFEP', 'TENASOSP']);
             $table->unsignedInteger('ordre');
             $table->boolean('saisissable')->default(true);
             $table->boolean('calculable')->default(false);
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['template_id','code']);
-            $table->index(['template_id','parent_id','ordre']);
+            $table->unique(['template_id', 'code']);
+            $table->index(['template_id', 'parent_id', 'ordre']);
         });
 
         Schema::create('system_template_maxima', function (Blueprint $table) {
@@ -94,7 +95,7 @@ return new class extends Migration {
             $table->decimal('maxima', 8, 2);
             $table->decimal('coefficient', 6, 2)->default(1);
             $table->timestamps();
-            $table->unique(['node_id','periode_id']);
+            $table->unique(['node_id', 'periode_id']);
         });
     }
 

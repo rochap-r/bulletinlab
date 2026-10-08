@@ -6,6 +6,7 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use RuntimeException;
 
 class BulletinLabTestDataSeeder extends Seeder
 {
@@ -28,17 +29,25 @@ class BulletinLabTestDataSeeder extends Seeder
             ['tenant_id' => $tenantId, 'code_ministere' => 'CST'],
             [
                 'nom' => 'Complexe Scolaire Test',
-                'province' => 'Kinshasa',
-                'ville' => 'Kinshasa',
+                'province' => 'Lualaba',
+                'province_educationnelle' => 'LUALABA 1',
+                'ville' => 'Kolwezi',
+                'commune_territoire' => 'DILALA',
                 'adresse' => 'Adresse CST',
                 'telephone' => '+243000000001',
                 'email' => 'info@cst.cd',
                 'actif' => true,
+                'public_id' => (string) Str::ulid(),
                 'updated_at' => now(),
             ]
         );
 
         $etablissementId = DB::table('etablissements')->where('tenant_id', $tenantId)->where('code_ministere', 'CST')->value('id');
+
+        DB::table('etablissements')
+            ->where('id', $etablissementId)
+            ->whereNull('public_id')
+            ->update(['public_id' => (string) Str::ulid()]);
 
         $roleId = DB::table('roles')->updateOrInsert(
             ['tenant_id' => $tenantId, 'code' => 'ADMIN'],
@@ -61,11 +70,17 @@ class BulletinLabTestDataSeeder extends Seeder
                 'email' => 'admin@test.com',
                 'mot_de_passe' => Hash::make('password123'),
                 'actif' => true,
+                'public_id' => (string) Str::ulid(),
                 'updated_at' => now(),
             ]
         );
 
         $userId = DB::table('utilisateurs')->where('tenant_id', $tenantId)->where('telephone', '+243000000002')->value('id');
+
+        DB::table('utilisateurs')
+            ->where('id', $userId)
+            ->whereNull('public_id')
+            ->update(['public_id' => (string) Str::ulid()]);
 
         DB::table('utilisateur_roles')->updateOrInsert(
             ['utilisateur_id' => $userId, 'role_id' => $roleId],
@@ -74,73 +89,141 @@ class BulletinLabTestDataSeeder extends Seeder
 
         $calendrierId = DB::table('calendriers_scolaires')->where('code', 'RDC_2026_2027')->value('id');
 
-        $anneeScolaireId = DB::table('annees_scolaires')->updateOrInsert(
-            ['tenant_id' => $tenantId, 'libelle' => '2026-2027'],
-            [
-                'calendrier_scolaire_id' => $calendrierId,
-                'date_debut' => '2026-09-01',
-                'date_fin' => '2027-07-31',
-                'active' => true,
-                'cloturee' => false,
-                'updated_at' => now(),
-            ]
-        );
+        $anneeScolaireId = DB::table('annees_scolaires')
+            ->where('calendrier_scolaire_id', $calendrierId)
+            ->value('id');
 
-        $anneeScolaireId = DB::table('annees_scolaires')->where('tenant_id', $tenantId)->where('libelle', '2026-2027')->value('id');
+        if (! $anneeScolaireId) {
+            throw new RuntimeException(
+                'The shared school year must be seeded before tenant data. '
+                .'Run BulletinLabSchoolYearSeeder first.'
+            );
+        }
 
-        $niveauId = DB::table('ref_niveaux')->where('code', 'HUM_1')->value('id');
-        $optionId = DB::table('ref_options')->where('code', 'COMMERCIALE_GESTION')->value('id');
-        $cycleId = DB::table('ref_cycles')->where('code', 'HUMANITES')->value('id');
-        $degreId = DB::table('ref_degres')->where('code', 'HUMANITES_TECHNIQUES')->value('id');
-        $templateId = DB::table('system_templates_bulletin')->where('code', 'COMMERCIALE_1')->value('id');
+        $optionIds = DB::table('ref_options')->pluck('id', 'code');
+        $cycleIds = DB::table('ref_cycles')->pluck('id', 'code');
+        $degreIds = DB::table('ref_degres')->pluck('id', 'code');
 
-        $classeId = DB::table('classes')->updateOrInsert(
-            ['tenant_id' => $tenantId, 'etablissement_id' => $etablissementId, 'annee_scolaire_id' => $anneeScolaireId, 'nom' => '1ère Commerciale A'],
-            [
-                'cycle_id' => $cycleId,
-                'degre_id' => $degreId,
-                'niveau_id' => $niveauId,
-                'option_id' => $optionId,
-                'system_template_id' => $templateId,
-                'parallele' => 'A',
-                'code' => '1CA',
-                'active' => true,
-                'updated_at' => now(),
-            ]
-        );
-
-        $classeId = DB::table('classes')->where('tenant_id', $tenantId)->where('nom', '1ère Commerciale A')->value('id');
-
-        $eleves = [
-            ['Kabongo', 'Jean', 'Pierre', 'M', '2010-05-15'],
-            ['Mutombo', 'Marie', 'Claire', 'F', '2010-08-22'],
-            ['Luboya', 'François', 'Michel', 'M', '2010-03-10'],
-            ['Makaya', 'Annie', 'Louise', 'F', '2010-11-30'],
-            ['Kasongo', 'Paul', 'André', 'M', '2010-07-18'],
+        $classes = [
+            ['template' => 'COMMERCIALE_1', 'nom' => '1ère Commerciale A', 'code' => '1CA', 'niveau' => 'HUM_1', 'cycle' => 'HUMANITES', 'degre' => 'HUMANITES_TECHNIQUES', 'option' => 'COMMERCIALE_GESTION'],
+            ['template' => 'COMMERCIALE_2', 'nom' => '2ème Commerciale A', 'code' => '2CA', 'niveau' => 'HUM_2', 'cycle' => 'HUMANITES', 'degre' => 'HUMANITES_TECHNIQUES', 'option' => 'COMMERCIALE_GESTION'],
+            ['template' => 'COMMERCIALE_3', 'nom' => '3ème Commerciale A', 'code' => '3CA', 'niveau' => 'HUM_3', 'cycle' => 'HUMANITES', 'degre' => 'HUMANITES_TECHNIQUES', 'option' => 'COMMERCIALE_GESTION'],
+            ['template' => 'COMMERCIALE_4', 'nom' => '4ème Commerciale A', 'code' => '4CA', 'niveau' => 'HUM_4', 'cycle' => 'HUMANITES', 'degre' => 'HUMANITES_TECHNIQUES', 'option' => 'COMMERCIALE_GESTION'],
+            ['template' => 'CTEB_7', 'nom' => '7ème EB A', 'code' => '7EBA', 'niveau' => 'CTEB_7', 'cycle' => 'EB', 'degre' => 'CTEB', 'option' => null],
+            ['template' => 'CTEB_8', 'nom' => '8ème EB A', 'code' => '8EBA', 'niveau' => 'CTEB_8', 'cycle' => 'EB', 'degre' => 'CTEB', 'option' => null],
         ];
 
-        foreach ($eleves as [$nom, $postnom, $prenom, $sexe, $dateNaissance]) {
-            $eleveId = DB::table('eleves')->updateOrInsert(
-                ['tenant_id' => $tenantId, 'nom' => $nom, 'postnom' => $postnom, 'prenom' => $prenom],
+        $elevesParTemplate = [
+            'COMMERCIALE_1' => [
+                ['Kabongo', 'Jean', 'Pierre', 'M', '2010-05-15', 'Kolwezi', '24B983142'],
+                ['Mutombo', 'Marie', 'Claire', 'F', '2010-08-22', 'Lubumbashi', '24B983143'],
+                ['Luboya', 'François', 'Michel', 'M', '2010-03-10', 'Kolwezi', '24B983144'],
+                ['Makaya', 'Annie', 'Louise', 'F', '2010-11-30', 'Likasi', '24B983145'],
+                ['Kasongo', 'Paul', 'André', 'M', '2010-07-18', 'Kolwezi', '24B983146'],
+            ],
+            'COMMERCIALE_2' => [
+                ['Ilunga', 'Joseph', 'Patrick', 'M', '2009-04-12', 'Kolwezi', '24B983147'],
+                ['Mbuyi', 'Thérèse', 'Nicole', 'F', '2009-06-25', 'Lubumbashi', '24B983148'],
+                ['Nkulu', 'Éric', 'Bertrand', 'M', '2009-02-08', 'Likasi', '24B983149'],
+                ['Tshibangu', 'Chantal', 'Léonie', 'F', '2009-09-19', 'Kolwezi', '24B983150'],
+                ['Mukendi', 'Pierre', 'Célestin', 'M', '2009-12-01', 'Kolwezi', '24B983151'],
+            ],
+            'COMMERCIALE_3' => [
+                ['Ngoy', 'Alice', 'Josée', 'F', '2008-03-05', 'Lubumbashi', '24B983152'],
+                ['Kanku', 'Michel', 'Robert', 'M', '2008-07-14', 'Kolwezi', '24B983153'],
+                ['Banza', 'Dorothée', 'Loraine', 'F', '2008-05-27', 'Likasi', '24B983154'],
+                ['Mulumba', 'Jacques', 'Olivier', 'M', '2008-10-09', 'Kolwezi', '24B983155'],
+                ['Kabila', 'Estelle', 'Prisca', 'F', '2008-01-16', 'Kolwezi', '24B983156'],
+            ],
+            'COMMERCIALE_4' => [
+                ['Lubwele', 'Serge', 'Antoine', 'M', '2007-06-02', 'Lubumbashi', '24B983157'],
+                ['Nzuzi', 'Béatrice', 'Sylvie', 'F', '2007-08-21', 'Kolwezi', '24B983158'],
+                ['Kahozi', 'Didier', 'Fernand', 'M', '2007-04-11', 'Likasi', '24B983159'],
+                ['Mwamba', 'Georgette', 'Nadine', 'F', '2007-11-24', 'Kolwezi', '24B983160'],
+                ['Kalonji', 'Léon', 'Martin', 'M', '2007-02-28', 'Kolwezi', '24B983161'],
+            ],
+            'CTEB_7' => [
+                ['Katumbi', 'Grâce', 'Merveille', 'F', '2012-04-18', 'Kolwezi', '25EBA7001'],
+            ],
+            'CTEB_8' => [
+                ['Mwenda', 'David', 'Junior', 'M', '2011-09-07', 'Likasi', '25EBA8001'],
+            ],
+        ];
+
+        foreach ($classes as $classeDefinition) {
+            $niveauId = DB::table('ref_niveaux')->where('code', $classeDefinition['niveau'])->value('id');
+            $templateId = DB::table('system_templates_bulletin')->where('code', $classeDefinition['template'])->value('id');
+
+            DB::table('classes')->updateOrInsert(
+                ['tenant_id' => $tenantId, 'etablissement_id' => $etablissementId, 'annee_scolaire_id' => $anneeScolaireId, 'nom' => $classeDefinition['nom']],
                 [
-                    'etablissement_id' => $etablissementId,
-                    'sexe' => $sexe,
-                    'date_naissance' => $dateNaissance,
-                    'actif' => true,
+                    'cycle_id' => $cycleIds[$classeDefinition['cycle']],
+                    'degre_id' => $degreIds[$classeDefinition['degre']],
+                    'niveau_id' => $niveauId,
+                    'option_id' => $classeDefinition['option'] === null
+                        ? null
+                        : $optionIds[$classeDefinition['option']],
+                    'system_template_id' => $templateId,
+                    'parallele' => 'A',
+                    'code' => $classeDefinition['code'],
+                    'active' => true,
+                    'public_id' => (string) Str::ulid(),
                     'updated_at' => now(),
                 ]
             );
 
-            $eleveId = DB::table('eleves')->where('tenant_id', $tenantId)->where('nom', $nom)->where('postnom', $postnom)->where('prenom', $prenom)->value('id');
+            $classeId = DB::table('classes')->where('tenant_id', $tenantId)->where('nom', $classeDefinition['nom'])->value('id');
 
-            DB::table('inscriptions')->updateOrInsert(
-                ['tenant_id' => $tenantId, 'eleve_id' => $eleveId, 'classe_id' => $classeId, 'annee_scolaire_id' => $anneeScolaireId],
-                [
-                    'date_inscription' => now(),
-                    'statut' => 'ACTIF',
-                    'updated_at' => now(),
-                ]
-            );
+            DB::table('classes')
+                ->where('id', $classeId)
+                ->whereNull('public_id')
+                ->update(['public_id' => (string) Str::ulid()]);
+
+            $eleves = $elevesParTemplate[$classeDefinition['template']] ?? [];
+
+            foreach ($eleves as [$nom, $postnom, $prenom, $sexe, $dateNaissance, $lieuNaissance, $numPermanent]) {
+                $eleveId = DB::table('eleves')->updateOrInsert(
+                    ['tenant_id' => $tenantId, 'nom' => $nom, 'postnom' => $postnom, 'prenom' => $prenom],
+                    [
+                        'etablissement_id' => $etablissementId,
+                        'sexe' => $sexe,
+                        'date_naissance' => $dateNaissance,
+                        'lieu_naissance' => $lieuNaissance,
+                        'num_permanent' => $numPermanent,
+                        'actif' => true,
+                        'public_id' => (string) Str::ulid(),
+                        'updated_at' => now(),
+                    ]
+                );
+
+                $eleveId = DB::table('eleves')->where('tenant_id', $tenantId)->where('nom', $nom)->where('postnom', $postnom)->where('prenom', $prenom)->value('id');
+
+                DB::table('eleves')
+                    ->where('id', $eleveId)
+                    ->whereNull('public_id')
+                    ->update(['public_id' => (string) Str::ulid()]);
+
+                DB::table('inscriptions')->updateOrInsert(
+                    ['tenant_id' => $tenantId, 'eleve_id' => $eleveId, 'classe_id' => $classeId, 'annee_scolaire_id' => $anneeScolaireId],
+                    [
+                        'date_inscription' => now(),
+                        'statut' => 'ACTIF',
+                        'public_id' => (string) Str::ulid(),
+                        'updated_at' => now(),
+                    ]
+                );
+
+                $inscriptionId = DB::table('inscriptions')
+                    ->where('tenant_id', $tenantId)
+                    ->where('eleve_id', $eleveId)
+                    ->where('classe_id', $classeId)
+                    ->value('id');
+
+                DB::table('inscriptions')
+                    ->where('id', $inscriptionId)
+                    ->whereNull('public_id')
+                    ->update(['public_id' => (string) Str::ulid()]);
+            }
         }
 
         $enseignantRoleId = DB::table('roles')->updateOrInsert(
@@ -164,11 +247,17 @@ class BulletinLabTestDataSeeder extends Seeder
                 'email' => 'prof@test.com',
                 'mot_de_passe' => Hash::make('password123'),
                 'actif' => true,
+                'public_id' => (string) Str::ulid(),
                 'updated_at' => now(),
             ]
         );
 
         $enseignantId = DB::table('utilisateurs')->where('tenant_id', $tenantId)->where('telephone', '+243000000003')->value('id');
+
+        DB::table('utilisateurs')
+            ->where('id', $enseignantId)
+            ->whereNull('public_id')
+            ->update(['public_id' => (string) Str::ulid()]);
 
         DB::table('utilisateur_roles')->updateOrInsert(
             ['utilisateur_id' => $enseignantId, 'role_id' => $enseignantRoleId],

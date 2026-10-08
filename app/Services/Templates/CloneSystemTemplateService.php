@@ -3,11 +3,11 @@
 namespace App\Services\Templates;
 
 use App\Models\Classe;
+use App\Models\ModeleBloc;
 use App\Models\ModeleBulletin;
+use App\Models\ModeleMaximum;
 use App\Models\ModeleNode;
 use App\Models\ModelePeriode;
-use App\Models\ModeleMaximum;
-use App\Models\ModeleBloc;
 use Illuminate\Support\Facades\DB;
 
 class CloneSystemTemplateService
@@ -15,7 +15,7 @@ class CloneSystemTemplateService
     public function cloneForClasse(Classe $classe): ModeleBulletin
     {
         return DB::transaction(function () use ($classe) {
-            $template = $classe->systemTemplate()->with(['nodes','periodes','maxima','blocs'])->firstOrFail();
+            $template = $classe->systemTemplate()->with(['nodes', 'periodes', 'maxima', 'blocs'])->firstOrFail();
 
             $modele = ModeleBulletin::create([
                 'tenant_id' => $classe->tenant_id,

@@ -4,7 +4,8 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('classes', function (Blueprint $table) {
@@ -23,7 +24,7 @@ return new class extends Migration {
             $table->foreignId('titulaire_id')->nullable()->constrained('utilisateurs')->nullOnDelete();
             $table->boolean('active')->default(true);
             $table->timestamps();
-            $table->unique(['tenant_id','etablissement_id','annee_scolaire_id','nom'], 'classes_unique_nom_annee');
+            $table->unique(['tenant_id', 'etablissement_id', 'annee_scolaire_id', 'nom'], 'classes_unique_nom_annee');
         });
 
         Schema::create('titulaires_classes', function (Blueprint $table) {
@@ -45,12 +46,12 @@ return new class extends Migration {
             $table->foreignId('system_template_id')->constrained('system_templates_bulletin')->restrictOnDelete();
             $table->foreignId('layout_id')->constrained('system_layouts_bulletin')->restrictOnDelete();
             $table->string('nom', 180);
-            $table->enum('type_decoupage', ['TRIMESTRIEL','SEMESTRIEL','PERSONNALISE']);
+            $table->enum('type_decoupage', ['TRIMESTRIEL', 'SEMESTRIEL', 'PERSONNALISE']);
             $table->decimal('total_general_maxima', 10, 2)->nullable();
             $table->boolean('verrouille')->default(false);
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['classe_id','annee_scolaire_id']);
+            $table->unique(['classe_id', 'annee_scolaire_id']);
         });
 
         Schema::create('modele_nodes', function (Blueprint $table) {
@@ -59,7 +60,7 @@ return new class extends Migration {
             $table->foreignId('modele_bulletin_id')->constrained('modeles_bulletin')->cascadeOnDelete();
             $table->foreignId('system_node_id')->nullable()->constrained('system_template_nodes')->nullOnDelete();
             $table->foreignId('parent_id')->nullable()->constrained('modele_nodes')->cascadeOnDelete();
-            $table->enum('type_node', ['DOMAINE','SOUS_DOMAINE','RUBRIQUE','GROUPE_MAXIMA','MATIERE','SOUS_TOTAL']);
+            $table->enum('type_node', ['DOMAINE', 'SOUS_DOMAINE', 'RUBRIQUE', 'GROUPE_MAXIMA', 'MATIERE', 'SOUS_TOTAL']);
             $table->foreignId('matiere_id')->nullable()->constrained('ref_matieres')->nullOnDelete();
             $table->string('libelle', 200);
             $table->unsignedInteger('ordre')->default(1);
@@ -78,13 +79,13 @@ return new class extends Migration {
             $table->foreignId('parent_id')->nullable()->constrained('modele_periodes')->nullOnDelete();
             $table->string('code', 60);
             $table->string('nom', 120);
-            $table->enum('type_periode', ['PERIODE','EXAMEN','TRIMESTRE','SEMESTRE','TOTAL','REPECHAGE','EXAMEN_ETAT','ENAFEP','TENASOSP']);
+            $table->enum('type_periode', ['PERIODE', 'EXAMEN', 'TRIMESTRE', 'SEMESTRE', 'TOTAL', 'REPECHAGE', 'EXAMEN_ETAT', 'ENAFEP', 'TENASOSP']);
             $table->unsignedInteger('ordre');
             $table->boolean('saisissable')->default(true);
             $table->boolean('calculable')->default(false);
             $table->boolean('actif')->default(true);
             $table->timestamps();
-            $table->unique(['modele_bulletin_id','code']);
+            $table->unique(['modele_bulletin_id', 'code']);
         });
 
         Schema::create('modele_maxima', function (Blueprint $table) {
@@ -96,7 +97,7 @@ return new class extends Migration {
             $table->decimal('maxima', 8, 2);
             $table->decimal('coefficient', 6, 2)->default(1);
             $table->timestamps();
-            $table->unique(['node_id','periode_id']);
+            $table->unique(['node_id', 'periode_id']);
         });
 
         Schema::create('modele_blocs', function (Blueprint $table) {
@@ -108,7 +109,7 @@ return new class extends Migration {
             $table->boolean('actif')->default(true);
             $table->json('configuration')->nullable();
             $table->timestamps();
-            $table->unique(['modele_bulletin_id','bloc_id']);
+            $table->unique(['modele_bulletin_id', 'bloc_id']);
         });
     }
 

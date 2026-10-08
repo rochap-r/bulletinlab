@@ -3,9 +3,31 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class ModeleMaximum extends Model
 {
     protected $table = 'modele_maxima';
-    protected $guarded = [];
+
+    protected $fillable = [
+        'tenant_id',
+        'modele_bulletin_id',
+        'node_id',
+        'periode_id',
+        'maxima',
+        'coefficient',
+    ];
+
+    protected function casts(): array
+    {
+        return [
+            'maxima' => 'decimal:2',
+            'coefficient' => 'decimal:2',
+        ];
+    }
+
+    public function periode(): BelongsTo
+    {
+        return $this->belongsTo(ModelePeriode::class);
+    }
 }

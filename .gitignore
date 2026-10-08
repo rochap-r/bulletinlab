@@ -21,7 +21,38 @@
 /storage/*.key
 /storage/pail
 /vendor
+/frontend
 _ide_helper.php
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Secrets and machine-specific environment files
+.env.*
+!.env.example
+
+# Local agent/editor tools and implementation notes
+/.agents/
+/.ai/
+/AGENTS.md
+/boost.json
+/opencode.json
+/PHASE_*.md
+/PLAN_*.md
+
+# Temporary previews, reference documents and browser profiles
+/tmp/
+/NUL
+/*.pdf
+/MEC AUTO/
+/MEC GEN/
+/scientifique/
+/2.01_BULLETINS PEDAGOGIE GENERALE/
+
+# Generated caches, coverage and local databases
+/coverage/
+/.pest/
+/.phpstan.cache/
+/database/*.sqlite
+/database/*.sqlite-*
+*.tsbuildinfo

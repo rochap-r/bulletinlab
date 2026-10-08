@@ -2,13 +2,14 @@
 
 namespace App\Domains\Bulletin\Contracts;
 
-class BulletinCalculationServiceInterface
+use App\Domains\Bulletin\DTOs\BulletinCalculationInput;
+use App\Domains\Bulletin\DTOs\BulletinCalculationResult;
+
+interface BulletinCalculationServiceInterface
 {
-    /**
-     * Create a new class instance.
-     */
-    public function __construct()
-    {
-        //
-    }
+    public function calculate(
+        BulletinCalculationInput $input,
+    ): BulletinCalculationResult;
+
+    public function version(): string;
 }

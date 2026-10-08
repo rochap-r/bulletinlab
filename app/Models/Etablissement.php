@@ -2,13 +2,31 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\HasPublicId;
 use App\Models\Concerns\HasTenant;
 use Illuminate\Database\Eloquent\Model;
 
 class Etablissement extends Model
 {
+    use HasPublicId;
     use HasTenant;
 
     protected $table = 'etablissements';
-    protected $guarded = [];
+
+    protected $fillable = [
+        'tenant_id',
+        'nom',
+        'code_ministere',
+        'province_educationnelle',
+        'province',
+        'ville',
+        'commune_territoire',
+        'adresse',
+        'telephone',
+        'email',
+        'logo_path',
+        'sceau_path',
+        'signature_directeur_path',
+        'actif',
+    ];
 }

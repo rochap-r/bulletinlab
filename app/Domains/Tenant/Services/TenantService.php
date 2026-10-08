@@ -2,18 +2,22 @@
 
 namespace App\Domains\Tenant\Services;
 
+use App\Domains\Tenant\Contexts\TenantContext;
 use App\Domains\Tenant\Contracts\TenantServiceInterface;
 use App\Domains\Tenant\Exceptions\TenantNotFoundException;
 use App\Models\Tenant;
-use Illuminate\Support\Facades\App;
 
 class TenantService implements TenantServiceInterface
 {
+    public function __construct(
+        private TenantContext $tenantContext,
+    ) {}
+
     public function findById(int $id): Tenant
     {
         $tenant = Tenant::find($id);
 
-        if (!$tenant) {
+        if (! $tenant) {
             throw new TenantNotFoundException("Tenant with ID {$id} not found");
         }
 
@@ -24,7 +28,7 @@ class TenantService implements TenantServiceInterface
     {
         $tenant = Tenant::where('slug', $slug)->first();
 
-        if (!$tenant) {
+        if (! $tenant) {
             throw new TenantNotFoundException("Tenant with slug {$slug} not found");
         }
 
@@ -33,10 +37,6 @@ class TenantService implements TenantServiceInterface
 
     public function getCurrentTenant(): Tenant
     {
-        if (!App::has('tenant')) {
-            throw new TenantNotFoundException('No tenant context found');
-        }
-
-        return App::get('tenant');
+        return $this->tenantContext->current();
     }
 }

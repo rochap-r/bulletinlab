@@ -11,7 +11,6 @@ class AnneeScolaireResource extends JsonResource
     {
         return [
             'id' => $this->id,
-            'tenant_id' => $this->tenant_id,
             'calendrier_scolaire_id' => $this->calendrier_scolaire_id,
             'libelle' => $this->libelle,
             'date_debut' => $this->date_debut,

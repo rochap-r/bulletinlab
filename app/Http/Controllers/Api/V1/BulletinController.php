@@ -2,56 +2,100 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Domains\Bulletin\Services\BulletinCompositionService;
+use App\Domains\Bulletin\Services\ListBulletinsService;
+use App\Domains\Bulletin\Services\PreviewBulletinCalculationService;
+use App\Domains\Bulletin\Services\PublishBulletinCalculationService;
+use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Http\Controllers\Controller;
-use App\Services\Bulletins\BulletinCalculationService;
-use App\Models\Bulletin;
-use App\Models\Classe;
-use Illuminate\Http\Request;
+use App\Http\Requests\Api\V1\Bulletin\ClassBulletinIndexRequest;
+use App\Http\Requests\Api\V1\Bulletin\CreateBulletinRectificationRequest;
+use App\Http\Requests\Api\V1\Bulletin\PreviewBulletinCalculationRequest;
+use App\Http\Requests\Api\V1\Bulletin\PublishBulletinCalculationRequest;
+use App\Http\Requests\Api\V1\Bulletin\ShowBulletinRequest;
+use App\Http\Requests\Api\V1\Student\ShowEnrollmentReportCardRequest;
+use App\Http\Resources\Api\V1\BulletinCalculationPreviewResource;
+use App\Http\Resources\Api\V1\BulletinCompositionResource;
+use App\Http\Resources\Api\V1\BulletinPublicationResource;
+use App\Http\Resources\Api\V1\BulletinResource;
 use Illuminate\Http\JsonResponse;
 
-class BulletinController extends Controller
+final class BulletinController extends Controller
 {
     public function __construct(
-        private BulletinCalculationService $calculationService
+        private EstablishmentContext $establishmentContext,
+        private BulletinCompositionService $bulletinCompositionService,
+        private ListBulletinsService $listBulletinsService,
+        private PreviewBulletinCalculationService $previewService,
+        private PublishBulletinCalculationService $publishService,
     ) {}
 
-    public function index(): JsonResponse
-    {
-        $bulletins = Bulletin::with('tenant', 'eleve', 'classe', 'anneeScolaire')->get();
-        return response()->json($bulletins);
+    public function previewCalculation(
+        PreviewBulletinCalculationRequest $request,
+    ): JsonResponse {
+        $result = $this->previewService->preview(
+            $this->establishmentContext->current(),
+            $request->bulletin()->getKey(),
+            $request->period()->getKey(),
+        );
+
+        return BulletinCalculationPreviewResource::make($result)->response();
     }
 
-    public function show(int $id): JsonResponse
-    {
-        $bulletin = Bulletin::with('tenant', 'eleve', 'classe', 'anneeScolaire', 'modeleBulletin')->findOrFail($id);
-        return response()->json($bulletin);
+    public function publishCalculation(
+        PublishBulletinCalculationRequest $request,
+    ): JsonResponse {
+        $result = $this->publishService->publish(
+            $request->bulletin(),
+            $request->bulletin()->classe,
+            $request->period(),
+            $request->user(),
+        );
+
+        return BulletinPublicationResource::make($result)->response();
     }
 
-    public function recalculate(int $id): JsonResponse
-    {
-        $bulletin = Bulletin::findOrFail($id);
-        $recalculated = $this->calculationService->recalculate($bulletin);
-        return response()->json($recalculated);
+    public function rectifyPublication(
+        CreateBulletinRectificationRequest $request,
+    ): JsonResponse {
+        $result = $this->publishService->rectify(
+            $request->bulletin(),
+            $request->bulletin()->classe,
+            $request->period(),
+            $request->user(),
+            $request->motif(),
+        );
+
+        return BulletinPublicationResource::make($result)
+            ->response()
+            ->setStatusCode(200);
     }
 
-    public function byClasse(int $classeId): JsonResponse
+    public function show(ShowBulletinRequest $request): JsonResponse
     {
-        $classe = Classe::findOrFail($classeId);
-        $bulletins = Bulletin::where('classe_id', $classeId)
-            ->with('eleve', 'modeleBulletin')
-            ->get();
-        return response()->json($bulletins);
+        return BulletinResource::make($request->bulletin())->response();
     }
 
-    public function calculate(Request $request): JsonResponse
-    {
-        $request->validate([
-            'classe_id' => 'required|integer|exists:classes,id',
-            'periode_id' => 'required|integer',
-        ]);
+    public function showForEnrollment(
+        ShowEnrollmentReportCardRequest $request,
+    ): JsonResponse {
+        $reportCard = $this->bulletinCompositionService->compose(
+            $request->enrollment(),
+        );
 
-        $result = $this->calculationService->calculateForClasse($request->classe_id, $request->periode_id);
+        return BulletinCompositionResource::make($reportCard)->response();
+    }
 
-        return response()->json($result);
+    public function byClasse(
+        ClassBulletinIndexRequest $request,
+    ): JsonResponse {
+        $bulletins = $this->listBulletinsService->paginateForClass(
+            $this->establishmentContext->current(),
+            $request->schoolClass(),
+            $request->integer('per_page', 50),
+            $request->decisionStatus(),
+        );
+
+        return BulletinResource::collection($bulletins)->response();
     }
 }

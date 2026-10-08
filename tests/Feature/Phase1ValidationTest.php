@@ -1,24 +1,27 @@
 <?php
 
-use App\Models\Tenant;
-use App\Models\Utilisateur;
-use App\Models\Etablissement;
-use App\Models\Role;
+use App\Domains\Tenant\Contexts\TenantContext;
 use App\Models\AnneeScolaire;
 use App\Models\Classe;
 use App\Models\Eleve;
+use App\Models\Etablissement;
 use App\Models\Inscription;
+use App\Models\Role;
+use App\Models\Tenant;
+use App\Models\Utilisateur;
+use Database\Seeders\BulletinLabAcademicSeeder;
+use Database\Seeders\BulletinLabCalendarSeeder;
+use Database\Seeders\BulletinLabCoreSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Laravel\Sanctum\Sanctum;
-use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
 test('phase 1 validation: complete bulletin workflow', function () {
-    $this->seed(\Database\Seeders\BulletinLabAcademicSeeder::class);
-    $this->seed(\Database\Seeders\BulletinLabCalendarSeeder::class);
-    $this->seed(\Database\Seeders\BulletinLabCoreSeeder::class);
+    $this->seed(BulletinLabAcademicSeeder::class);
+    $this->seed(BulletinLabCalendarSeeder::class);
+    $this->seed(BulletinLabCoreSeeder::class);
 
     $tenant = Tenant::create([
         'uuid' => Str::uuid(),
@@ -56,13 +59,13 @@ test('phase 1 validation: complete bulletin workflow', function () {
 
     $user->roles()->attach($role->id);
 
-    Sanctum::actingAs($user);
-    app()->instance('tenant', $tenant);
+    $accessToken = $user->createToken('phase-1-validation', ["tenant:{$tenant->id}"]);
+    $this->withToken($accessToken->plainTextToken);
+    app(TenantContext::class)->set($tenant);
 
-    $calendrierId = \DB::table('calendriers_scolaires')->where('code', 'RDC_2026_2027')->value('id');
+    $calendrierId = DB::table('calendriers_scolaires')->where('code', 'RDC_2026_2027')->value('id');
 
     $anneeScolaire = AnneeScolaire::create([
-        'tenant_id' => $tenant->id,
         'calendrier_scolaire_id' => $calendrierId,
         'libelle' => '2026-2027',
         'date_debut' => '2026-09-01',
@@ -71,21 +74,18 @@ test('phase 1 validation: complete bulletin workflow', function () {
 
     expect($anneeScolaire)->not->toBeNull();
 
-    $response = $this->postJson('/api/v1/annees-scolaires/' . $anneeScolaire->id . '/open');
-    $response->assertStatus(200);
+    $cycleId = DB::table('ref_cycles')->where('code', 'HUMANITES')->value('id');
+    $niveauId = DB::table('ref_niveaux')->where('code', 'HUM_1')->value('id');
+    $optionId = DB::table('ref_options')->where('code', 'COMMERCIALE_GESTION')->value('id');
 
-    $cycleId = \DB::table('ref_cycles')->where('code', 'HUMANITES')->value('id');
-    $niveauId = \DB::table('ref_niveaux')->where('code', 'HUM_1')->value('id');
-    $optionId = \DB::table('ref_options')->where('code', 'COMMERCIALE_GESTION')->value('id');
-
-    $layoutId = \DB::table('system_layouts_bulletin')->insertGetId([
+    $layoutId = DB::table('system_layouts_bulletin')->insertGetId([
         'code' => 'TEST_LAYOUT',
         'nom' => 'Layout Test',
         'description' => 'Test layout',
         'actif' => true,
     ]);
 
-    $templateId = \DB::table('system_templates_bulletin')->insertGetId([
+    $templateId = DB::table('system_templates_bulletin')->insertGetId([
         'code' => 'TEST_TEMPLATE',
         'nom' => 'Template Test',
         'cycle_id' => $cycleId,
@@ -132,17 +132,17 @@ test('phase 1 validation: complete bulletin workflow', function () {
 
     expect($inscription)->not->toBeNull();
 
-    $response = $this->getJson('/api/v1/classes/' . $classe->id);
+    $response = $this->getJson('/api/v1/classes/'.$classe->id);
     $response->assertStatus(200);
     $response->assertJsonFragment(['nom' => '1ère Commerciale A']);
 
     $response = $this->getJson('/api/v1/eleves');
     $response->assertStatus(200);
-    $elevesData = $response->json();
+    $elevesData = $response->json('data');
     expect($elevesData)->toHaveCount(1);
 
-    $response = $this->getJson('/api/v1/inscriptions');
+    $response = $this->getJson('/api/v1/classes/'.$classe->id.'/inscriptions');
     $response->assertStatus(200);
-    $inscriptionsData = $response->json();
+    $inscriptionsData = $response->json('data');
     expect($inscriptionsData)->toHaveCount(1);
 });

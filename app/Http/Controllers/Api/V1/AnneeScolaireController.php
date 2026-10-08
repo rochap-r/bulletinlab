@@ -3,63 +3,38 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Domains\SchoolYear\Contracts\OpenSchoolYearServiceInterface;
+use App\Http\Requests\Api\V1\PaginationRequest;
+use App\Http\Resources\Api\V1\SchoolYearResource;
 use App\Models\AnneeScolaire;
-use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 
-class AnneeScolaireController extends Controller
+final class AnneeScolaireController extends Controller
 {
-    public function __construct(
-        private OpenSchoolYearServiceInterface $schoolYearService
-    ) {}
-
-    public function index(): JsonResponse
+    public function index(PaginationRequest $request): JsonResponse
     {
-        $annees = AnneeScolaire::with('tenant', 'etablissement')->get();
-        return response()->json($annees);
+        $schoolYears = AnneeScolaire::query()
+            ->latest('id')
+            ->paginate($request->integer('per_page', 50));
+
+        return SchoolYearResource::collection($schoolYears)->response();
     }
 
-    public function store(Request $request): JsonResponse
+    public function courante(): JsonResponse
     {
-        $request->validate([
-            'tenant_id' => 'required|integer|exists:tenants,id',
-            'calendrier_id' => 'required|integer|exists:calendriers_scolaires,id',
-            'libelle' => 'required|string',
-            'date_debut' => 'nullable|date',
-            'date_fin' => 'nullable|date',
-            'cycles' => 'nullable|array',
-        ]);
+        $annee = AnneeScolaire::forDate();
 
-        $annee = $this->schoolYearService->openSchoolYear($request->tenant_id, $request->all());
+        if (! $annee) {
+            throw (new ModelNotFoundException)->setModel(AnneeScolaire::class);
+        }
 
-        return response()->json($annee, 201);
+        return SchoolYearResource::make($annee)->response();
     }
 
-    public function show(int $id): JsonResponse
+    public function show(int $anneesScolaire): JsonResponse
     {
-        $annee = AnneeScolaire::with('tenant', 'etablissement', 'calendrierScolaire')->findOrFail($id);
-        return response()->json($annee);
-    }
-
-    public function update(Request $request, int $id): JsonResponse
-    {
-        $annee = AnneeScolaire::findOrFail($id);
-        $annee->update($request->all());
-        return response()->json($annee);
-    }
-
-    public function destroy(int $id): JsonResponse
-    {
-        $annee = AnneeScolaire::findOrFail($id);
-        $annee->delete();
-        return response()->json(['message' => 'Deleted successfully']);
-    }
-
-    public function open(int $id): JsonResponse
-    {
-        $annee = AnneeScolaire::findOrFail($id);
-        $annee->update(['active' => true]);
-        return response()->json($annee);
+        return SchoolYearResource::make(
+            AnneeScolaire::query()->findOrFail($anneesScolaire),
+        )->response();
     }
 }

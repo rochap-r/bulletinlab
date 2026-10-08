@@ -3,66 +3,128 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Domains\SchoolYear\Services\AttendanceService;
+use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Attendance\AttendanceIndexRequest;
+use App\Http\Requests\Api\V1\Attendance\StoreAttendanceRequest;
+use App\Http\Requests\Api\V1\Attendance\StudentAttendanceIndexRequest;
 use App\Http\Resources\Api\V1\AttendanceResource;
+use App\Models\Classe;
+use App\Models\Inscription;
+use App\Models\ModelePeriode;
+use App\Models\Utilisateur;
+use Illuminate\Auth\AuthenticationException;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 
-class AttendanceController extends Controller
+final class AttendanceController extends Controller
 {
-    public function store(Request $request): JsonResponse
-    {
-        $request->validate([
-            'inscription_id' => 'required|integer|exists:inscriptions,id',
-            'date_presence' => 'required|date',
-            'moment' => 'nullable|in:JOURNEE,MATIN,APRES_MIDI',
-            'statut' => 'required|in:PRESENT,ABSENT,RETARD,JUSTIFIE',
-            'observation' => 'nullable|string',
-            'periode_id' => 'nullable|integer|exists:modele_periodes,id',
-        ]);
+    public function __construct(
+        private AttendanceService $attendanceService,
+        private EstablishmentContext $establishmentContext,
+    ) {}
 
-        $data = $request->all();
-        $data['tenant_id'] = auth()->user()->tenant_id ?? null;
-        $data['etablissement_id'] = auth()->user()->etablissement_id ?? null;
-        $data['annee_scolaire_id'] = auth()->user()->annee_scolaire_id ?? null;
-        $data['classe_id'] = \App\Models\Inscription::findOrFail($request->inscription_id)->classe_id;
-        $data['saisi_par'] = auth()->id();
+    public function store(
+        StoreAttendanceRequest $request,
+        int $classe,
+    ): JsonResponse {
+        $resolvedClass = $this->resolveClass($classe);
+        $validated = $request->validated();
+        $inscription = Inscription::query()
+            ->where('classe_id', $resolvedClass->id)
+            ->with(['classe', 'eleve'])
+            ->findOrFail($validated['inscription_id']);
 
-        $attendance = app(AttendanceService::class)->recordAttendance($data);
-
-        return response()->json(AttendanceResource::make($attendance), 201);
-    }
-
-    public function index(Request $request): JsonResponse
-    {
-        $request->validate([
-            'classe_id' => 'required|integer|exists:classes,id',
-            'date' => 'nullable|date',
-            'periode_id' => 'nullable|integer|exists:modele_periodes,id',
-        ]);
-
-        $attendance = app(AttendanceService::class)->getAttendance(
-            $request->classe_id,
-            $request->date,
-            $request->periode_id
+        $this->ensurePeriodBelongsToClass(
+            $resolvedClass,
+            $validated['periode_id'] ?? null,
         );
 
-        return response()->json(AttendanceResource::collection($attendance));
-    }
-
-    public function showStudent(int $inscriptionId, Request $request): JsonResponse
-    {
-        $request->validate([
-            'start_date' => 'nullable|date',
-            'end_date' => 'nullable|date',
-        ]);
-
-        $attendance = app(AttendanceService::class)->getStudentAttendance(
-            $inscriptionId,
-            $request->start_date,
-            $request->end_date
+        $attendance = $this->attendanceService->recordAttendance(
+            $inscription,
+            $validated,
+            $this->authenticatedUserId($request),
         );
 
-        return response()->json(AttendanceResource::collection($attendance));
+        return AttendanceResource::make($attendance)
+            ->response()
+            ->setStatusCode(201);
+    }
+
+    public function index(AttendanceIndexRequest $request, int $classe): JsonResponse
+    {
+        $resolvedClass = $this->resolveClass($classe);
+        $validated = $request->validated();
+
+        $this->ensurePeriodBelongsToClass(
+            $resolvedClass,
+            $validated['periode_id'] ?? null,
+        );
+
+        $attendance = $this->attendanceService->getAttendance(
+            $resolvedClass,
+            $validated['date'] ?? null,
+            $validated['periode_id'] ?? null,
+            $validated['per_page'] ?? 50,
+        );
+
+        return AttendanceResource::collection($attendance)->response();
+    }
+
+    public function showStudent(
+        StudentAttendanceIndexRequest $request,
+        int $inscription,
+    ): JsonResponse {
+        $resolvedInscription = Inscription::query()
+            ->whereHas(
+                'classe',
+                fn ($query) => $query->where(
+                    'etablissement_id',
+                    $this->establishmentContext->id(),
+                ),
+            )
+            ->with(['classe', 'eleve'])
+            ->findOrFail($inscription);
+        $validated = $request->validated();
+
+        $attendance = $this->attendanceService->getStudentAttendance(
+            $resolvedInscription,
+            $validated['start_date'] ?? null,
+            $validated['end_date'] ?? null,
+            $validated['per_page'] ?? 50,
+        );
+
+        return AttendanceResource::collection($attendance)->response();
+    }
+
+    private function resolveClass(int $classId): Classe
+    {
+        return Classe::query()
+            ->where('etablissement_id', $this->establishmentContext->id())
+            ->findOrFail($classId);
+    }
+
+    private function ensurePeriodBelongsToClass(Classe $classe, ?int $periodId): void
+    {
+        if ($periodId === null) {
+            return;
+        }
+
+        ModelePeriode::query()
+            ->whereIn(
+                'modele_bulletin_id',
+                $classe->modeleBulletins()->select('modeles_bulletin.id'),
+            )
+            ->findOrFail($periodId);
+    }
+
+    private function authenticatedUserId(StoreAttendanceRequest $request): int
+    {
+        $user = $request->user();
+
+        if (! $user instanceof Utilisateur) {
+            throw new AuthenticationException;
+        }
+
+        return $user->getKey();
     }
 }
