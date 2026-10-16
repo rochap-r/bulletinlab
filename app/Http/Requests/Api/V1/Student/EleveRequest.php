@@ -19,11 +19,21 @@ class EleveRequest extends FormRequest
     ): bool {
         $user = $this->user();
 
-        return $user instanceof Utilisateur
-            && $gate->forUser($user)->allows(
-                'manageAcademicStructure',
-                $establishmentContext->current(),
-            );
+        if (! $user instanceof Utilisateur) {
+            return false;
+        }
+
+        if ($gate->forUser($user)->allows(
+            'manageAcademicStructure',
+            $establishmentContext->current(),
+        )) {
+            return true;
+        }
+
+        // Le secrétariat gère le dossier élève de son école.
+        return $user->actif
+            && $user->etablissement_id === $establishmentContext->id()
+            && $user->hasTenantRole('SECRETARIAT');
     }
 
     /**

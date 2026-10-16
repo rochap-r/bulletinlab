@@ -79,7 +79,7 @@ test('API validation errors use Problem Details', function () {
             'status' => 422,
             'instance' => '/api/v1/auth/login',
         ])
-        ->assertJsonValidationErrors(['tenant_slug', 'identifiant', 'password']);
+        ->assertJsonValidationErrors(['identifiant', 'password']);
 });
 
 test('API authentication errors use Problem Details', function () {

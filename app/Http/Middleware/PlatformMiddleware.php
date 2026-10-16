@@ -7,6 +7,7 @@ use App\Domains\Tenant\Exceptions\PlatformContextNotFoundException;
 use App\Models\UtilisateurPlateforme;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Context;
 use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -36,6 +37,11 @@ final class PlatformMiddleware
         }
 
         $this->platformContext->set($user);
+
+        Context::add([
+            'user_id' => $user->getKey(),
+            'user_type' => 'platform',
+        ]);
 
         try {
             return $next($request);

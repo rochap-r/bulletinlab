@@ -1,14 +1,68 @@
 <?php
 
 use App\Domains\Tenant\Contexts\TenantContext;
+use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\Utilisateur;
+use Database\Seeders\TenantAdminDemoSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 
 uses(RefreshDatabase::class);
+
+test('tenant admin login and me expose scoped roles and a safe tenant summary', function () {
+    $tenant = createTenantForAuthEndpointTests();
+    $user = createUtilisateurForAuthEndpointTests($tenant);
+    $role = Role::query()->create(['tenant_id' => $tenant->id, 'code' => 'ADMIN_ECOLE', 'nom' => 'Administrateur', 'system_role' => false]);
+    $otherTenant = createTenantForAuthEndpointTests(['slug' => 'other-school']);
+    $foreignRole = Role::query()->create(['tenant_id' => $otherTenant->id, 'code' => 'FOREIGN_ADMIN', 'nom' => 'Autre école', 'system_role' => false]);
+    $user->roles()->attach([$role->id, $foreignRole->id]);
+    $login = $this->postJson('/api/v1/auth/login', [
+        'tenant_slug' => $tenant->slug,
+        'identifiant' => $user->telephone,
+        'password' => 'secret-password',
+    ])->assertOk()
+        ->assertJsonPath('data.user.roles', ['ADMIN_ECOLE'])
+        ->assertJsonPath('data.user.tenant.slug', $tenant->slug)
+        ->assertJsonMissingPath('data.user.tenant.id')
+        ->assertJsonMissingPath('data.user.mot_de_passe');
+    $this->withToken($login->json('data.access_token'))->getJson('/api/v1/me')
+        ->assertOk()->assertJsonPath('data.roles', ['ADMIN_ECOLE'])
+        ->assertJsonPath('data.tenant.statut', 'ACTIF')->assertJsonMissingPath('data.tenant.id');
+});
+
+test('tenant middleware rejects an existing token once its user becomes inactive', function () {
+    $tenant = createTenantForAuthEndpointTests();
+    $user = createUtilisateurForAuthEndpointTests($tenant);
+    $token = $user->createToken('inactive-test', ["tenant:{$tenant->id}"])->plainTextToken;
+    $user->update(['actif' => false]);
+    $this->withToken($token)->getJson('/api/v1/me')->assertForbidden();
+});
+
+test('demo admin seeding preserves the password and other roles while remaining idempotent', function () {
+    $tenant = createTenantForAuthEndpointTests(['slug' => 'ecole-test']);
+    $user = createUtilisateurForAuthEndpointTests($tenant, ['telephone' => '+243000000002']);
+    $password = $user->mot_de_passe;
+    $role = Role::query()->create(['tenant_id' => $tenant->id, 'code' => 'ADMIN', 'nom' => 'Ancien administrateur', 'system_role' => false]);
+    $user->roles()->attach($role->id);
+    $this->seed(TenantAdminDemoSeeder::class);
+    $this->seed(TenantAdminDemoSeeder::class);
+    expect($user->fresh()->mot_de_passe)->toBe($password);
+    expect($user->roles()->pluck('code')->all())->toContain('ADMIN', 'ADMIN_ECOLE');
+    expect(Utilisateur::query()->where('tenant_id', $tenant->id)->count())->toBe(1);
+    expect(Role::query()->where('tenant_id', $tenant->id)->where('code', 'ADMIN_ECOLE')->count())->toBe(1);
+});
+
+test('demo admin seeding is forbidden in production', function () {
+    app()->detectEnvironment(fn (): string => 'production');
+    try {
+        expect(fn () => $this->seed(TenantAdminDemoSeeder::class))->toThrow(LogicException::class);
+    } finally {
+        app()->detectEnvironment(fn (): string => 'testing');
+    }
+});
 
 function createTenantForAuthEndpointTests(array $attributes = []): Tenant
 {

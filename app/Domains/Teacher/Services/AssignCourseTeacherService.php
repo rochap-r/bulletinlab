@@ -18,6 +18,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 final class AssignCourseTeacherService implements AssignCourseTeacherServiceInterface
 {
@@ -34,6 +35,8 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
                 ->where('etablissement_id', $class->etablissement_id)
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            Gate::forUser($actor)->authorize('assignCourseTeacher', $lockedClass);
 
             if (! $lockedClass->active) {
                 throw new CourseAssignmentConflictException(
@@ -219,12 +222,8 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
             ->where('actif', true)
             ->whereHas('roles', function (Builder $query) use ($class): void {
                 $query
-                    ->where('roles.code', 'ENSEIGNANT')
-                    ->where(function (Builder $roleQuery) use ($class): void {
-                        $roleQuery
-                            ->whereNull('roles.tenant_id')
-                            ->orWhere('roles.tenant_id', $class->tenant_id);
-                    });
+                    ->where('roles.name', 'ENSEIGNANT')
+                    ->validForTenant($class->tenant_id);
             })
             ->lockForUpdate()
             ->first();

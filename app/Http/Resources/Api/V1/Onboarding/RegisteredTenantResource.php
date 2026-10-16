@@ -31,7 +31,7 @@ class RegisteredTenantResource extends JsonResource
                 'type_tenant' => $tenant->type_tenant,
                 'statut' => $tenant->statut,
             ],
-            'etablissement' => [
+            'etablissement' => $etablissement === null ? null : [
                 'id' => $etablissement->id,
                 'nom' => $etablissement->nom,
             ],

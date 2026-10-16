@@ -3,13 +3,11 @@
 namespace App\Http\Requests\Api\V1\Classroom;
 
 use App\Domains\Tenant\Contexts\EstablishmentContext;
-use App\Domains\Tenant\Contexts\TenantContext;
 use App\Models\Classe;
 use App\Models\Utilisateur;
 use Illuminate\Contracts\Auth\Access\Gate;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -56,24 +54,24 @@ final class ClasseRequest extends FormRequest
     public function rules(): array
     {
         $required = $this->isMethod('POST') ? 'required' : 'sometimes';
-        $tenantId = app(TenantContext::class)->id();
 
         return [
+            // Les années scolaires sont globales (sans tenant) depuis la
+            // migration drop_tenant_ownership_from_annees_scolaires.
             'annee_scolaire_id' => [
                 $required,
                 'integer',
-                Rule::exists('annees_scolaires', 'id')
-                    ->where(fn (Builder $query): Builder => $query->where('tenant_id', $tenantId)),
+                Rule::exists('annees_scolaires', 'id'),
             ],
             'cycle_id' => [$required, 'integer', Rule::exists('ref_cycles', 'id')],
             'degre_id' => ['sometimes', 'nullable', 'integer', Rule::exists('ref_degres', 'id')],
             'niveau_id' => [$required, 'integer', Rule::exists('ref_niveaux', 'id')],
             'option_id' => ['sometimes', 'nullable', 'integer', Rule::exists('ref_options', 'id')],
-            'system_template_id' => [
-                $required,
-                'integer',
-                Rule::exists('system_templates_bulletin', 'id')->where('actif', true),
-            ],
+            // À la création, le modèle est toujours résolu par le système
+            // (cycle + option + niveau) : jamais envoyé par le client.
+            'system_template_id' => $this->isMethod('POST')
+                ? ['prohibited']
+                : ['sometimes', 'integer', Rule::exists('system_templates_bulletin', 'id')->where('actif', true)],
             'parallele' => ['sometimes', 'nullable', 'string', 'max:20'],
             'nom' => [$required, 'string', 'max:120'],
             'code' => ['sometimes', 'nullable', 'string', 'max:80'],

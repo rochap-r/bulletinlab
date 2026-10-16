@@ -7,5 +7,13 @@ use Illuminate\Database\Eloquent\Model;
 class Abonnement extends Model
 {
     protected $table = 'abonnements';
-    protected $guarded = [];
+
+    protected $fillable = [
+        'tenant_id',
+        'plan_id',
+        'statut',
+        'date_debut',
+        'date_fin',
+        'trial_ends_at',
+    ];
 }

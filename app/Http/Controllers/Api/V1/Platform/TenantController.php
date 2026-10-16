@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Platform;
 
 use App\Domains\Tenant\Contracts\TenantValidationServiceInterface;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\Platform\PlatformTenantIndexRequest;
 use App\Http\Requests\Api\V1\Platform\PlatformTenantRejectionRequest;
 use App\Http\Requests\Api\V1\Platform\PlatformTenantRequest;
 use App\Http\Resources\Api\V1\Platform\TenantResource;
@@ -18,10 +19,11 @@ final class TenantController extends Controller
         private readonly TenantValidationServiceInterface $tenantValidationService,
     ) {}
 
-    public function index(): JsonResponse
+    public function index(PlatformTenantIndexRequest $request): JsonResponse
     {
         $tenants = Tenant::query()
             ->withCount('etablissements')
+            ->when($request->statut(), fn ($query, $statut) => $query->where('statut', $statut))
             ->orderBy('nom_espace')
             ->get();
 
@@ -51,7 +53,12 @@ final class TenantController extends Controller
             ->withCount('etablissements')
             ->findOrFail($tenant);
 
-        $tenantModel->load('etablissements');
+        $tenantModel->load([
+            'etablissements',
+            'validePar',
+            'utilisateurs' => fn ($query) => $query->orderBy('id')->limit(1),
+            'audits' => fn ($query) => $query->latest()->limit(20),
+        ]);
 
         return TenantResource::make($tenantModel)->response();
     }
@@ -95,6 +102,19 @@ final class TenantController extends Controller
         );
 
         return TenantResource::make($refused->loadCount('etablissements'))
+            ->response();
+    }
+
+    public function reexamine(Request $request, int $tenant): JsonResponse
+    {
+        $tenantModel = Tenant::query()->findOrFail($tenant);
+
+        $reexamined = $this->tenantValidationService->reexamine(
+            $tenantModel,
+            $request->user(),
+        );
+
+        return TenantResource::make($reexamined->loadCount('etablissements'))
             ->response();
     }
 

@@ -8,10 +8,14 @@ use App\Domains\Bulletin\Services\PublishClassBulletinsService;
 use App\Domains\Bulletin\Services\ValidateClassDeliberationService;
 use App\Domains\Evaluation\Services\EncodageProgressService;
 use App\Domains\SchoolYear\Services\ArchiveClassService;
+use App\Domains\SchoolYear\Services\OrganizeSchoolClassesService;
+use App\Domains\SchoolYear\Services\ResolveClassTemplateService;
 use App\Domains\SchoolYear\Services\UpdateClassService;
 use App\Domains\Teacher\Contracts\AssignCourseTeacherServiceInterface;
+use App\Domains\Teacher\Exceptions\ClassCourseListingConflictException;
 use App\Domains\Teacher\Services\AssignClassTitularService;
 use App\Domains\Teacher\Services\ListClassCoursesService;
+use App\Domains\Teacher\Services\SaveClassTeachingTeamService;
 use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Domains\Tenant\Contexts\TenantContext;
 use App\Http\Controllers\Controller;
@@ -21,10 +25,12 @@ use App\Http\Requests\Api\V1\Classroom\ClasseRequest;
 use App\Http\Requests\Api\V1\Classroom\DeliberateClassRequest;
 use App\Http\Requests\Api\V1\Classroom\GenerateProclamationRequest;
 use App\Http\Requests\Api\V1\Classroom\GeneratePromotionRequest;
+use App\Http\Requests\Api\V1\Classroom\OrganizeClassesRequest;
 use App\Http\Requests\Api\V1\Classroom\PublishClassRequest;
 use App\Http\Requests\Api\V1\PaginationRequest;
 use App\Http\Requests\Api\V1\Teacher\AssignClassTitularRequest;
 use App\Http\Requests\Api\V1\Teacher\AssignCourseTeacherRequest;
+use App\Http\Requests\Api\V1\Teacher\SaveClassTeachingTeamRequest;
 use App\Http\Resources\Api\V1\ClassCourseResource;
 use App\Http\Resources\Api\V1\ClasseResource;
 use App\Http\Resources\Api\V1\ClassTitularAssignmentResource;
@@ -32,8 +38,12 @@ use App\Http\Resources\Api\V1\CourseAssignmentResource;
 use App\Http\Resources\Api\V1\EncodageProgressResource;
 use App\Http\Resources\Api\V1\ProclamationResource;
 use App\Models\Classe;
+use App\Models\ModeleBulletin;
 use App\Models\ModelePeriode;
+use App\Services\Templates\CloneSystemTemplateService;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 final class ClasseController extends Controller
 {
@@ -50,25 +60,59 @@ final class ClasseController extends Controller
         private ValidateClassDeliberationService $deliberationService,
         private PublishClassBulletinsService $publishClassService,
         private PromotionService $promotionService,
+        private ResolveClassTemplateService $resolveClassTemplateService,
+        private OrganizeSchoolClassesService $organizeSchoolClassesService,
+        private CloneSystemTemplateService $cloneSystemTemplateService,
     ) {}
 
     public function index(PaginationRequest $request): JsonResponse
     {
         $classes = Classe::query()
             ->where('etablissement_id', $this->establishmentContext->id())
+            ->with(['cycle', 'niveau', 'option'])
             ->latest('id')
             ->paginate($request->integer('per_page', 50));
 
         return ClasseResource::collection($classes)->response();
     }
 
+    public function organize(OrganizeClassesRequest $request): JsonResponse
+    {
+        $validated = $request->validated();
+        $classes = $this->organizeSchoolClassesService->organize(
+            $this->tenantContext->id(),
+            $this->establishmentContext->id(),
+            (int) $validated['annee_scolaire_id'],
+            $validated['organisations'],
+            filled($validated['parallele'] ?? null) ? trim($validated['parallele']) : null,
+        );
+
+        return ClasseResource::collection($classes)
+            ->response()
+            ->setStatusCode(201);
+    }
+
     public function store(ClasseRequest $request): JsonResponse
     {
-        $classe = Classe::query()->create([
-            ...$request->validated(),
-            'tenant_id' => $this->tenantContext->id(),
-            'etablissement_id' => $this->establishmentContext->id(),
-        ]);
+        $validated = $request->validated();
+
+        $template = $this->resolveClassTemplateService->resolve(
+            (int) $validated['cycle_id'],
+            isset($validated['option_id']) ? (int) $validated['option_id'] : null,
+            (int) $validated['niveau_id'],
+        );
+
+        $classe = DB::transaction(function () use ($validated, $template): Classe {
+            $classe = Classe::query()->create([
+                ...$validated,
+                'system_template_id' => $template->getKey(),
+                'tenant_id' => $this->tenantContext->id(),
+                'etablissement_id' => $this->establishmentContext->id(),
+            ]);
+            $this->cloneSystemTemplateService->cloneForClasse($classe);
+
+            return $classe;
+        });
 
         return ClasseResource::make($classe)
             ->response()
@@ -116,6 +160,13 @@ final class ClasseController extends Controller
             ->setStatusCode(200);
     }
 
+    public function saveTeachingTeam(SaveClassTeachingTeamRequest $request, SaveClassTeachingTeamService $service): JsonResponse
+    {
+        $service->save($request->schoolClass(), $request->actor(), $request->validated());
+
+        return response()->json(['message' => 'L’équipe de la classe a été enregistrée.']);
+    }
+
     public function courses(ClassCourseIndexRequest $request): JsonResponse
     {
         $courses = $this->listClassCoursesService->paginate(
@@ -124,6 +175,27 @@ final class ClasseController extends Controller
         );
 
         return ClassCourseResource::collection($courses)->response();
+    }
+
+    public function initializeCourses(int $classe): JsonResponse
+    {
+        $class = $this->resolveClass($classe);
+        Gate::authorize('assignCourseTeacher', $class);
+
+        $model = DB::transaction(function () use ($class): ModeleBulletin {
+            $class = Classe::query()->whereKey($class->getKey())->lockForUpdate()->firstOrFail();
+            $year = $class->anneeScolaire()->lockForUpdate()->firstOrFail();
+
+            if (! $class->active || ! $year->active || $year->cloturee) {
+                throw new ClassCourseListingConflictException(
+                    'La configuration des cours ne peut pas être initialisée pour une classe archivée ou une année clôturée.',
+                );
+            }
+
+            return $this->cloneSystemTemplateService->cloneForClasse($class);
+        });
+
+        return response()->json(['data' => ['modele_bulletin_id' => $model->getKey()]]);
     }
 
     public function assignTitular(

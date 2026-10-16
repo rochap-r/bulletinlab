@@ -235,6 +235,10 @@ Route::prefix('platform')
             ->whereNumber('tenant')
             ->name('tenants.refus');
 
+        Route::post('tenants/{tenant}/reexamen', [TenantController::class, 'reexamine'])
+            ->whereNumber('tenant')
+            ->name('tenants.reexamen');
+
         Route::get('tenants/{tenant}/etablissements', [EtablissementController::class, 'index'])
             ->whereNumber('tenant')
             ->name('tenants.etablissements.index');

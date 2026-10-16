@@ -11,4 +11,6 @@ interface PlatformAuthServiceInterface
     public function login(PlatformLoginData $data): PlatformAuthenticatedSession;
 
     public function logout(UtilisateurPlateforme $utilisateur): void;
+
+    public function logoutAll(UtilisateurPlateforme $utilisateur): void;
 }

@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Api\V1\Membership;
 
 use App\Domains\Membership\DTOs\AcceptanceData;
+use App\Support\PhoneNumberNormalizer;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -24,8 +25,8 @@ final class AcceptInvitationRequest extends FormRequest
             'nom' => ['required', 'string', 'max:100'],
             'postnom' => ['nullable', 'string', 'max:100'],
             'prenom' => ['nullable', 'string', 'max:100'],
-            'telephone' => ['required', 'string', 'max:30'],
-            'mot_de_passe' => ['required', 'string', 'min:8', 'max:255'],
+            'telephone' => ['required', 'string', 'max:16', 'regex:/^\+[1-9]\d{7,14}$/'],
+            'mot_de_passe' => ['required', 'string', 'min:6', 'max:255'],
         ];
     }
 
@@ -43,5 +44,19 @@ final class AcceptInvitationRequest extends FormRequest
             telephone: $this->string('telephone')->trim()->toString(),
             motDePasse: $this->string('mot_de_passe')->toString(),
         );
+    }
+
+    protected function prepareForValidation(): void
+    {
+        if (! is_string($this->input('telephone'))) {
+            return;
+        }
+
+        try {
+            $this->merge([
+                'telephone' => PhoneNumberNormalizer::normalize($this->input('telephone')),
+            ]);
+        } catch (\InvalidArgumentException) {
+        }
     }
 }

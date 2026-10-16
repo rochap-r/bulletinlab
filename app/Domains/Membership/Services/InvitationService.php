@@ -139,12 +139,10 @@ final class InvitationService implements InvitationServiceInterface
 
             $role = Role::query()
                 ->whereKey($invitation->role_id)
-                ->where(fn (Builder $query) => $query
-                    ->whereNull('roles.tenant_id')
-                    ->orWhere('roles.tenant_id', $invitation->tenant_id))
+                ->validForTenant($invitation->tenant_id)
                 ->first();
 
-            if (! $role || $role->code === 'SUPER_ADMIN') {
+            if (! $role || $role->name === 'SUPER_ADMIN' || $role->code === 'SUPER_ADMIN') {
                 throw new InvitationConflictException('The invited role is no longer assignable.');
             }
 
@@ -160,7 +158,7 @@ final class InvitationService implements InvitationServiceInterface
                 'actif' => true,
             ]);
 
-            $user->roles()->attach($role->getKey());
+            $user->assignRole($role);
             $invitation->update(['accepted_at' => now()]);
 
             AuditLog::query()->create([

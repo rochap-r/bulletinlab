@@ -1,8 +1,13 @@
 <?php
 
+use App\Http\Middleware\EnsureTenantPermission;
+use App\Http\Middleware\EnsureTenantRole;
 use App\Http\Middleware\EstablishmentMiddleware;
 use App\Http\Middleware\PeriodeOuverteMiddleware;
 use App\Http\Middleware\PlatformMiddleware;
+use App\Http\Middleware\RequestLogging;
+use App\Http\Middleware\RequirePasswordChange;
+use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TenantMiddleware;
 use App\Http\Middleware\TenantValidatedMiddleware;
 use App\Http\Responses\ProblemDetailsResponse;
@@ -20,12 +25,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->trustProxies(at: env('TRUSTED_PROXIES', '*'));
+
+        $middleware->append(SecurityHeaders::class);
+        $middleware->append(RequestLogging::class);
+
         $middleware->alias([
             'establishment' => EstablishmentMiddleware::class,
             'platform' => PlatformMiddleware::class,
             'tenant' => TenantMiddleware::class,
             'tenant.validated' => TenantValidatedMiddleware::class,
+            'require.password.change' => RequirePasswordChange::class,
             'periode.ouverte' => PeriodeOuverteMiddleware::class,
+            'tenant.role' => EnsureTenantRole::class,
+            'tenant.permission' => EnsureTenantPermission::class,
         ]);
 
         $middleware->redirectGuestsTo(fn (Request $request): ?string => null);
@@ -33,6 +46,11 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToPriorityList(
             SubstituteBindings::class,
             EstablishmentMiddleware::class,
+        );
+
+        $middleware->prependToPriorityList(
+            TenantValidatedMiddleware::class,
+            RequirePasswordChange::class,
         );
 
         $middleware->prependToPriorityList(
@@ -55,6 +73,12 @@ return Application::configure(basePath: dirname(__DIR__))
                 return null;
             }
 
-            return ProblemDetailsResponse::fromException($exception, $request);
+            $response = ProblemDetailsResponse::fromException($exception, $request);
+
+            if ($request->attributes->has('request_id')) {
+                $response->headers->set('X-Request-Id', (string) $request->attributes->get('request_id'));
+            }
+
+            return $response;
         });
     })->create();

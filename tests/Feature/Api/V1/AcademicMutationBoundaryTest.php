@@ -9,8 +9,14 @@ use App\Domains\Student\Events\StudentEnrolled;
 use App\Domains\Student\Events\StudentReactivated;
 use App\Domains\Student\Exceptions\StudentException;
 use App\Domains\Student\Services\ImportStudentsService;
+use App\Domains\Teacher\DTOs\AssignClassTitularData;
+use App\Domains\Teacher\DTOs\AssignCourseTeacherData;
 use App\Domains\Teacher\Events\ClassTitularAssigned;
 use App\Domains\Teacher\Events\CourseTeacherAssigned;
+use App\Domains\Teacher\Services\AssignClassTitularService;
+use App\Domains\Teacher\Services\AssignCourseTeacherService;
+use App\Domains\Teacher\Services\CourseAssignmentSpreadsheetService;
+use App\Domains\Teacher\Services\TitularAssignmentSpreadsheetService;
 use App\Domains\Teacher\Services\UpsertMyCourseAssignmentNoteService;
 use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Domains\Tenant\Contexts\TenantContext;
@@ -45,6 +51,7 @@ use App\Policies\EtablissementPolicy;
 use App\Policies\InscriptionPolicy;
 use App\Policies\NotePolicy;
 use Carbon\CarbonImmutable;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Events\ShouldDispatchAfterCommit;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -61,6 +68,360 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
 uses(RefreshDatabase::class);
+
+function courseAssignmentWorkbookFile(Spreadsheet $book): UploadedFile
+{
+    ob_start();
+    (new Xlsx($book))->save('php://output');
+    $contents = ob_get_clean();
+    $book->disconnectWorksheets();
+
+    return UploadedFile::fake()->createWithContent('attributions.xlsx', $contents);
+}
+
+test('titular nominations save atomically and never alter course assignments', function () {
+    $catalog = createAcademicMutationCatalog();
+    $scope = createAcademicMutationScope($catalog, 'TITULAR-BATCH');
+    $foreign = createAcademicMutationScope($catalog, 'TITULAR-FOREIGN', $scope['tenant']);
+    $teacher = createCourseAssignmentTeacher($scope, 'TITULAR-BATCH');
+    $token = academicMutationToken($scope);
+    $this->withToken($token)->putJson('/api/v1/titulariats', [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [
+            ['classe_id' => $scope['class']->id, 'titulaire_id' => $teacher->id],
+            ['classe_id' => $foreign['class']->id, 'titulaire_id' => $teacher->id],
+        ],
+    ])->assertNotFound();
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull();
+
+    $secondClass = $scope['class']->replicate(['public_id']);
+    $secondClass->nom = 'Deuxième classe titulaire';
+    $secondClass->save();
+    $invalid = createCourseAssignmentTeacher($scope, 'TITULAR-INACTIVE');
+    $invalid->update(['actif' => false]);
+    $this->withToken($token)->putJson('/api/v1/titulariats', [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [
+            ['classe_id' => $scope['class']->id, 'titulaire_id' => $teacher->id],
+            ['classe_id' => $secondClass->id, 'titulaire_id' => $invalid->id],
+        ],
+    ])->assertNotFound();
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and(TitulaireClasse::query()->count())->toBe(0)
+        ->and(DB::table('audit_logs')->count())->toBe(0);
+
+    $payload = ['annee_scolaire_id' => $scope['year']->id, 'titulariats' => [['classe_id' => $scope['class']->id, 'titulaire_id' => $teacher->id]]];
+    $this->withToken($token)->putJson('/api/v1/titulariats', $payload)->assertOk()->assertJsonPath('data.0.titulaire_id', $teacher->id);
+    $this->withToken($token)->putJson('/api/v1/titulariats', $payload)->assertOk();
+    expect($scope['class']->refresh()->titulaire_id)->toBe($teacher->id)
+        ->and(TitulaireClasse::query()->where('actif', true)->count())->toBe(1)
+        ->and(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail()->enseignant_id)->toBe($scope['user']->id)
+        ->and(DB::table('audit_logs')->where('action', 'TITULARIAT_CLASSE_ENREGISTRE')->count())->toBe(1);
+    $scope['year']->update(['cloturee' => true]);
+    $this->withToken($token)->putJson('/api/v1/titulariats', $payload)->assertConflict();
+});
+
+test('titular nominations revalidate an unchanged teacher before saving any class', function (string $defect) {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TITULAR-REVALIDATE');
+    $teacher = createCourseAssignmentTeacher($scope, 'TITULAR-REVALIDATE');
+    $secondClass = $scope['class']->replicate(['public_id']);
+    $secondClass->nom = 'Classe avec titulaire existant';
+    $secondClass->titulaire_id = $teacher->id;
+    $secondClass->save();
+    $replacement = createCourseAssignmentTeacher($scope, 'TITULAR-NEW');
+    if ($defect === 'inactive') {
+        $teacher->update(['actif' => false]);
+    } else {
+        $teacher->syncRoles([]);
+    }
+
+    $this->withToken(academicMutationToken($scope))->putJson('/api/v1/titulariats', [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [
+            ['classe_id' => $scope['class']->id, 'titulaire_id' => $replacement->id],
+            ['classe_id' => $secondClass->id, 'titulaire_id' => $teacher->id],
+        ],
+    ])->assertNotFound();
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and(TitulaireClasse::query()->count())->toBe(0)
+        ->and(DB::table('audit_logs')->count())->toBe(0);
+})->with(['inactive', 'without role']);
+
+test('the titular spreadsheet previews school classes without writing and imports through the scoped batch', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TITULAR-XLSX');
+    $teacher = createCourseAssignmentTeacher($scope, 'TITULAR-XLSX');
+    $token = academicMutationToken($scope);
+    $book = app(TitularAssignmentSpreadsheetService::class)->template($scope['establishment'], $scope['year']->id);
+    expect($book->getSheet(0)->getCell('A2')->getValue())->toBe($scope['class']->nom)
+        ->and($book->getSheet(0)->getColumnDimension('C')->getVisible())->toBeFalse();
+    $book->getSheet(0)->setCellValue('B2', $book->getSheet(1)->getCell('A2')->getValue());
+    $preview = $this->withToken($token)->postJson('/api/v1/titulariats/excel/apercu', [
+        'annee_scolaire_id' => $scope['year']->id, 'fichier' => courseAssignmentWorkbookFile($book),
+    ])->assertOk()->assertJsonCount(0, 'data.erreurs')->assertJsonPath('data.lignes.0.titulaire_id', $teacher->id);
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and(DB::table('audit_logs')->count())->toBe(0);
+    $rows = collect($preview->json('data.lignes'))->map(fn (array $row): array => ['classe_id' => $row['classe_id'], 'titulaire_id' => $row['titulaire_id']])->all();
+    $this->withToken($token)->putJson('/api/v1/titulariats', ['annee_scolaire_id' => $scope['year']->id, 'titulariats' => $rows])->assertOk();
+    expect($scope['class']->refresh()->titulaire_id)->toBe($teacher->id);
+});
+
+test('titular spreadsheets report invalid school references unknown teachers and duplicated classes', function (string $defect) {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TITULAR-BAD-XLSX');
+    createCourseAssignmentTeacher($scope, 'TITULAR-BAD-XLSX');
+    $book = app(TitularAssignmentSpreadsheetService::class)->template($scope['establishment'], $scope['year']->id);
+    $sheet = $book->getSheet(0);
+    $sheet->setCellValue('B2', $book->getSheet(1)->getCell('A2')->getValue());
+    if ($defect === 'school') {
+        $sheet->setCellValue('D2', 'autre-ecole');
+    } elseif ($defect === 'teacher') {
+        $sheet->setCellValue('B2', 'Enseignant introuvable');
+    } else {
+        $sheet->fromArray($sheet->rangeToArray('A2:D2', null, false, false), null, 'A3');
+    }
+    $this->withToken(academicMutationToken($scope))->postJson('/api/v1/titulariats/excel/apercu', [
+        'annee_scolaire_id' => $scope['year']->id, 'fichier' => courseAssignmentWorkbookFile($book),
+    ])->assertOk()->assertJsonCount(1, 'data.erreurs');
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull();
+})->with(['school', 'teacher', 'duplicate']);
+
+test('the course assignment spreadsheet round trips real courses and previews without writing', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    $teacher = createCourseAssignmentTeacher($scope, 'EXCEL');
+    $token = academicMutationToken($scope);
+    $base = "/api/v1/classes/{$scope['class']->id}/attributions-excel";
+    $this->withToken($token)->getJson($base.'/modele')->assertOk()
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    $book = app(CourseAssignmentSpreadsheetService::class)->template($scope['class']);
+    $sheet = $book->getSheet(0);
+    expect($sheet->getCell('A2')->getValue())->toBe($scope['node']->libelle)
+        ->and($sheet->getColumnDimension('C')->getVisible())->toBeFalse()
+        ->and($sheet->getCell('B2')->getDataValidation()->getFormula1())->toBe('ListeEnseignants')
+        ->and($book->getSheet(1)->getCell('A2')->getDataType())->toBe('s');
+    $sheet->setCellValue('B2', $book->getSheet(1)->getCell('A2')->getValue());
+    $response = $this->withToken($token)->postJson($base.'/apercu', ['fichier' => courseAssignmentWorkbookFile($book)])
+        ->assertOk()->assertJsonCount(0, 'data.erreurs')->assertJsonCount(1, 'data.lignes')
+        ->assertJsonPath('data.lignes.0.enseignant_id', $teacher->id);
+    expect(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail()->enseignant_id)->toBe($scope['user']->id)
+        ->and(DB::table('audit_logs')->count())->toBe(0);
+
+    $rows = collect($response->json('data.lignes'))->map(fn (array $row): array => ['node_id' => $row['node_id'], 'enseignant_id' => $row['enseignant_id']])->all();
+    $this->withToken($token)->putJson("/api/v1/classes/{$scope['class']->id}/equipe-pedagogique", ['cours' => $rows])->assertOk();
+    expect(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail()->enseignant_id)->toBe($teacher->id);
+});
+
+test('spreadsheet previews reject foreign references unknown teachers formulas and duplicate courses', function (string $defect) {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    createCourseAssignmentTeacher($scope, 'EXCEL-INVALID');
+    $book = app(CourseAssignmentSpreadsheetService::class)->template($scope['class']);
+    $sheet = $book->getSheet(0);
+    $sheet->setCellValue('B2', $book->getSheet(1)->getCell('A2')->getValue());
+    if ($defect === 'foreign-class') {
+        $sheet->setCellValue('D2', 'autre-classe');
+    } elseif ($defect === 'unknown-teacher') {
+        $sheet->setCellValue('B2', 'Enseignant absent');
+    } elseif ($defect === 'formula') {
+        $sheet->setCellValue('B2', '=1+1');
+    } else {
+        $sheet->fromArray($sheet->rangeToArray('A2:D2', null, false, false), null, 'A3');
+    }
+    $this->withToken(academicMutationToken($scope))->postJson(
+        "/api/v1/classes/{$scope['class']->id}/attributions-excel/apercu", ['fichier' => courseAssignmentWorkbookFile($book)],
+    )->assertOk()->assertJsonCount(1, 'data.erreurs');
+    expect(DB::table('audit_logs')->count())->toBe(0)
+        ->and(AttributionCours::query()->where('classe_id', $scope['class']->id)->count())->toBe(1);
+})->with(['foreign-class', 'unknown-teacher', 'formula', 'duplicate']);
+
+test('only school direction can assign courses and titulars', function (string $roleCode, bool $allowed) {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    $teacher = createCourseAssignmentTeacher($scope, 'DIRECTION');
+    $role = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => $roleCode],
+        ['nom' => $roleCode, 'system_role' => true],
+    );
+    $scope['user']->roles()->sync([$role->id]);
+    $scope['user']->unsetRelation('roles');
+    $token = academicMutationToken($scope);
+    $originalAssignment = AttributionCours::withoutGlobalScopes()->where('classe_id', $scope['class']->id)->firstOrFail();
+
+    $courseResponse = $this->withToken($token)->putJson(
+        "/api/v1/classes/{$scope['class']->id}/cours/{$scope['node']->id}/attribution",
+        ['enseignant_id' => $teacher->id],
+    );
+    $titularResponse = $this->withToken($token)->putJson(
+        "/api/v1/classes/{$scope['class']->id}/titulariat",
+        ['titulaire_id' => $teacher->id],
+    );
+    $teamResponse = $this->withToken($token)->putJson(
+        "/api/v1/classes/{$scope['class']->id}/equipe-pedagogique",
+        ['titulaire_id' => $teacher->id, 'cours' => [['node_id' => $scope['node']->id, 'enseignant_id' => $teacher->id]]],
+    );
+    $excelResponse = $this->withToken($token)->getJson("/api/v1/classes/{$scope['class']->id}/attributions-excel/modele");
+    $titularBatchResponse = $this->withToken($token)->putJson('/api/v1/titulariats', [
+        'annee_scolaire_id' => $scope['year']->id, 'titulariats' => [['classe_id' => $scope['class']->id, 'titulaire_id' => $teacher->id]],
+    ]);
+    $titularExcelResponse = $this->withToken($token)->getJson('/api/v1/titulariats/excel/modele?annee_scolaire_id='.$scope['year']->id);
+
+    if ($allowed) {
+        $courseResponse->assertOk()->assertJsonPath('data.enseignant.id', $teacher->id);
+        $titularResponse->assertOk()->assertJsonPath('data.titulaire.id', $teacher->id);
+        $teamResponse->assertOk();
+        $excelResponse->assertOk();
+        $titularBatchResponse->assertOk();
+        $titularExcelResponse->assertOk();
+    } else {
+        $courseResponse->assertForbidden();
+        $titularResponse->assertForbidden();
+        $teamResponse->assertForbidden();
+        $excelResponse->assertForbidden();
+        $titularBatchResponse->assertForbidden();
+        $titularExcelResponse->assertForbidden();
+        expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+            ->and($originalAssignment->refresh()->actif)->toBeTrue()
+            ->and(AttributionCours::withoutGlobalScopes()->count())->toBe(1)
+            ->and(TitulaireClasse::withoutGlobalScopes()->count())->toBe(0)
+            ->and(DB::table('audit_logs')->count())->toBe(0);
+    }
+})->with([
+    'prefet' => ['GESTIONNAIRE_ECOLE', true],
+    'directeur des etudes' => ['DIRECTEUR_ETUDES', true],
+    'administrateur espace' => ['ADMIN_TENANT', false],
+    'administrateur ecole' => ['ADMIN_ECOLE', false],
+    'super administrateur' => ['SUPER_ADMIN', false],
+    'enseignant' => ['ENSEIGNANT', false],
+    'titulaire' => ['TITULAIRE', false],
+    'secretariat' => ['SECRETARIAT', false],
+]);
+
+test('the teaching team saves together and rolls back every change when one course is invalid', function () {
+    $catalog = createAcademicMutationCatalog();
+    $scope = createAcademicMutationScope($catalog, 'TEAM');
+    $foreign = createAcademicMutationScope($catalog, 'TEAM-FOREIGN', $scope['tenant']);
+    $teacher = createCourseAssignmentTeacher($scope, 'TEAM');
+    $token = academicMutationToken($scope);
+    $uri = "/api/v1/classes/{$scope['class']->id}/equipe-pedagogique";
+    Event::fake([ClassTitularAssigned::class, CourseTeacherAssigned::class]);
+
+    $this->withToken($token)->putJson($uri, [
+        'titulaire_id' => $teacher->id,
+        'cours' => [
+            ['node_id' => $scope['node']->id, 'enseignant_id' => $teacher->id],
+            ['node_id' => $foreign['node']->id, 'enseignant_id' => $teacher->id],
+        ],
+    ])->assertNotFound();
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and(TitulaireClasse::query()->where('classe_id', $scope['class']->id)->count())->toBe(0)
+        ->and(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail()->enseignant_id)->toBe($scope['user']->id)
+        ->and(DB::table('audit_logs')->count())->toBe(0);
+    Event::assertNotDispatched(ClassTitularAssigned::class);
+    Event::assertNotDispatched(CourseTeacherAssigned::class);
+
+    $payload = ['titulaire_id' => $teacher->id, 'cours' => [['node_id' => $scope['node']->id, 'enseignant_id' => $teacher->id]]];
+    $this->withToken($token)->putJson($uri, $payload)->assertOk();
+    $assignment = AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail();
+    $assignment->update(['date_debut' => '2026-10-01', 'date_fin' => '2027-06-30']);
+    $this->withToken($token)->putJson($uri, $payload)->assertOk();
+    expect($scope['class']->refresh()->titulaire_id)->toBe($teacher->id)
+        ->and($assignment->refresh()->date_debut->toDateString())->toBe('2026-10-01')
+        ->and($assignment->date_fin->toDateString())->toBe('2027-06-30')
+        ->and(DB::table('audit_logs')->count())->toBe(2);
+});
+
+test('the teaching team revalidates unchanged teachers before saving', function (string $target) {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TEAM-REVALIDATE');
+    $teacher = createCourseAssignmentTeacher($scope, 'TEAM-REVALIDATE');
+    $token = academicMutationToken($scope);
+    $uri = "/api/v1/classes/{$scope['class']->id}/equipe-pedagogique";
+    $payload = $target === 'titular'
+        ? ['titulaire_id' => $teacher->id, 'cours' => []]
+        : ['cours' => [['node_id' => $scope['node']->id, 'enseignant_id' => $teacher->id]]];
+    $this->withToken($token)->putJson($uri, $payload)->assertOk();
+    $auditCount = DB::table('audit_logs')->count();
+    $teacher->update(['actif' => false]);
+
+    $this->withToken($token)->putJson($uri, $payload)->assertNotFound();
+    expect(DB::table('audit_logs')->count())->toBe($auditCount);
+})->with(['titular', 'course']);
+
+test('the teaching team can save only a titular and rejects duplicate course choices', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    $teacher = createCourseAssignmentTeacher($scope, 'TEAM-TITULAR');
+    $token = academicMutationToken($scope);
+    $uri = "/api/v1/classes/{$scope['class']->id}/equipe-pedagogique";
+    $course = ['node_id' => $scope['node']->id, 'enseignant_id' => $teacher->id];
+    $this->withToken($token)->putJson($uri, ['cours' => [$course, $course]])->assertUnprocessable();
+    $this->withToken($token)->putJson($uri, ['titulaire_id' => $teacher->id, 'cours' => []])->assertOk();
+    expect($scope['class']->refresh()->titulaire_id)->toBe($teacher->id)
+        ->and(AttributionCours::query()->where('enseignant_id', $teacher->id)->count())->toBe(0);
+    $scope['year']->update(['cloturee' => true]);
+    $this->withToken($token)->putJson($uri, ['cours' => [$course]])->assertConflict();
+});
+
+test('assignment services reject an administrator even outside HTTP', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    $teacher = createCourseAssignmentTeacher($scope, 'INTERNAL');
+    $role = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ADMIN_TENANT'],
+        ['nom' => 'Administrateur', 'system_role' => true],
+    );
+    $scope['user']->roles()->sync([$role->id]);
+    $scope['user']->unsetRelation('roles');
+    app(TenantContext::class)->set($scope['tenant']);
+    app(EstablishmentContext::class)->set($scope['establishment']);
+
+    try {
+        expect(fn () => app(AssignCourseTeacherService::class)->assignCourse(
+            $scope['class'], $scope['node'], $scope['user'],
+            new AssignCourseTeacherData(teacherId: $teacher->id, startDate: null, endDate: null),
+        ))->toThrow(AuthorizationException::class);
+        expect(fn () => app(AssignClassTitularService::class)->assign(
+            $scope['class'], $scope['user'],
+            new AssignClassTitularData(titularId: $teacher->id, startDate: null, endDate: null),
+        ))->toThrow(AuthorizationException::class);
+        expect(TitulaireClasse::query()->count())->toBe(0)
+            ->and(AttributionCours::query()->count())->toBe(1);
+    } finally {
+        app(TenantContext::class)->clear();
+        app(EstablishmentContext::class)->clear();
+    }
+});
+
+test('a titular can have zero courses and a teacher can teach several courses across classes', function () {
+    $catalog = createAcademicMutationCatalog();
+    $scope = createAcademicMutationScope($catalog);
+    $teacher = createCourseAssignmentTeacher($scope, 'MULTI');
+    $titular = createCourseAssignmentTeacher($scope, 'TITULAR-ONLY');
+    $secondClass = $scope['class']->replicate(['public_id']);
+    $secondClass->nom = 'Deuxième classe';
+    $secondClass->save();
+    $secondModel = $scope['model']->replicate(['public_id']);
+    $secondModel->classe_id = $secondClass->id;
+    $secondModel->save();
+    $secondNode = $scope['node']->replicate();
+    $secondNode->libelle = 'Deuxième cours';
+    $secondNode->save();
+    $otherNode = $scope['node']->replicate();
+    $otherNode->modele_bulletin_id = $secondModel->id;
+    $otherNode->save();
+    $otherPeriod = $scope['period']->replicate();
+    $otherPeriod->modele_bulletin_id = $secondModel->id;
+    $otherPeriod->save();
+    foreach ([[$secondNode, $scope['model'], $scope['period']], [$otherNode, $secondModel, $otherPeriod]] as [$node, $model, $period]) {
+        ModeleMaximum::query()->create([
+            'tenant_id' => $scope['tenant']->id, 'modele_bulletin_id' => $model->id,
+            'node_id' => $node->id, 'periode_id' => $period->id, 'maxima' => 20, 'coefficient' => 1,
+        ]);
+    }
+    $token = academicMutationToken($scope);
+    $this->withToken($token)->putJson("/api/v1/classes/{$scope['class']->id}/titulariat", ['titulaire_id' => $titular->id])->assertOk();
+    expect(AttributionCours::withoutGlobalScopes()->where('enseignant_id', $titular->id)->count())->toBe(0);
+
+    foreach ([[$scope['class'], $scope['node']], [$scope['class'], $secondNode], [$secondClass, $otherNode]] as [$class, $node]) {
+        $this->withToken($token)->putJson("/api/v1/classes/{$class->id}/cours/{$node->id}/attribution", ['enseignant_id' => $teacher->id])->assertOk();
+    }
+    expect(AttributionCours::withoutGlobalScopes()->where('enseignant_id', $teacher->id)->where('actif', true)->count())->toBe(3)
+        ->and($scope['class']->refresh()->titulaire_id)->toBe($titular->id)
+        ->and($secondClass->refresh()->titulaire_id)->toBeNull();
+});
 
 /**
  * @return array{
@@ -3134,6 +3495,43 @@ test('an assigned teacher lists only their current course assignments without n 
 
     expect($paginatedResponse->json('links.first'))
         ->toContain('per_page=1');
+});
+
+test('a teacher lists classes where they teach or hold the titular responsibility', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-15'));
+
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog());
+    $teacher = createCourseAssignmentTeacher($scope, 'CLASS-DASHBOARD');
+    $scope['class']->update([
+        'code' => '3E-A',
+        'titulaire_id' => $teacher->id,
+    ]);
+    AttributionCours::query()
+        ->where('classe_id', $scope['class']->id)
+        ->update(['enseignant_id' => $teacher->id]);
+    $assignment = AttributionCours::query()
+        ->where('classe_id', $scope['class']->id)
+        ->where('enseignant_id', $teacher->id)
+        ->firstOrFail();
+
+    $token = $teacher->createToken(
+        'teacher-class-dashboard',
+        ["tenant:{$scope['tenant']->id}"],
+    )->plainTextToken;
+    $this->app['auth']->forgetGuards();
+
+    $this->withToken($token)
+        ->getJson('/api/v1/me/classes')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $scope['class']->id)
+        ->assertJsonPath('data.0.code', '3E-A')
+        ->assertJsonPath('data.0.est_titulaire', true)
+        ->assertJsonPath('data.0.annee_scolaire.id', $scope['year']->id)
+        ->assertJsonPath('data.0.cours.0.attribution_id', $assignment->id)
+        ->assertJsonPath('data.0.cours.0.id', $scope['node']->id)
+        ->assertJsonMissing(['tenant_id' => $scope['tenant']->id])
+        ->assertJsonMissing(['titulaire_id' => $teacher->id]);
 });
 
 test('the teacher workspace fails closed across role context and temporal boundaries', function () {

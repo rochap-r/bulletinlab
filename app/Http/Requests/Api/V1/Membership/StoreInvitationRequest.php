@@ -7,7 +7,6 @@ use App\Models\Invitation;
 use App\Models\Role;
 use App\Models\Utilisateur;
 use Illuminate\Contracts\Auth\Access\Gate;
-use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
@@ -61,12 +60,8 @@ final class StoreInvitationRequest extends FormRequest
     {
         $role = Role::query()
             ->whereKey($this->integer('role_id'))
-            ->where(function (Builder $query): void {
-                $query
-                    ->whereNull('roles.tenant_id')
-                    ->orWhere('roles.tenant_id', $this->user()->tenant_id);
-            })
-            ->where('roles.code', '!=', 'SUPER_ADMIN')
+            ->validForTenant($this->user()->tenant_id)
+            ->where('roles.name', '!=', 'SUPER_ADMIN')
             ->first();
 
         return $role

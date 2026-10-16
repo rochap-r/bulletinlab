@@ -10,7 +10,16 @@ class Tenant extends Model
 {
     protected $table = 'tenants';
 
-    protected $guarded = [];
+    protected $fillable = [
+        'uuid',
+        'nom_espace',
+        'slug',
+        'type_tenant',
+        'statut',
+        'valide_at',
+        'valide_par_id',
+        'motif_refus',
+    ];
 
     protected $casts = [
         'valide_at' => 'datetime',
@@ -30,6 +39,22 @@ class Tenant extends Model
     public function validePar(): BelongsTo
     {
         return $this->belongsTo(UtilisateurPlateforme::class, 'valide_par_id');
+    }
+
+    /**
+     * @return HasMany<Utilisateur, $this>
+     */
+    public function utilisateurs(): HasMany
+    {
+        return $this->hasMany(Utilisateur::class);
+    }
+
+    /**
+     * @return HasMany<AuditLog, $this>
+     */
+    public function audits(): HasMany
+    {
+        return $this->hasMany(AuditLog::class);
     }
 
     public function isPendingValidation(): bool

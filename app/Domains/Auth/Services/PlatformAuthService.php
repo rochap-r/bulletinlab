@@ -34,7 +34,7 @@ class PlatformAuthService implements PlatformAuthServiceInterface
         }
 
         $accessToken = $utilisateur
-            ->createToken('platform-auth', ['context:platform'])
+            ->createToken('platform-auth', ['context:platform'], now()->addMinutes((int) config('sanctum.expiration', 43200)))
             ->plainTextToken;
 
         return new PlatformAuthenticatedSession($utilisateur, $accessToken);
@@ -47,5 +47,10 @@ class PlatformAuthService implements PlatformAuthServiceInterface
         if ($accessToken instanceof PersonalAccessToken) {
             $accessToken->delete();
         }
+    }
+
+    public function logoutAll(UtilisateurPlateforme $utilisateur): void
+    {
+        $utilisateur->tokens()->delete();
     }
 }

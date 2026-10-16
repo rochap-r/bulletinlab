@@ -2,6 +2,8 @@
 
 namespace Database\Seeders;
 
+use App\Models\Permission;
+use App\Models\Role;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 
@@ -30,12 +32,18 @@ class BulletinLabCoreSeeder extends Seeder
         ];
 
         foreach ($permissions as $code => $nom) {
-            DB::table('permissions')->updateOrInsert(['code' => $code], ['nom' => $nom, 'created_at' => now(), 'updated_at' => now()]);
+            $permission = Permission::findOrCreate($code, 'web');
+            $permission->forceFill([
+                'code' => $code,
+                'nom' => $nom,
+            ])->save();
         }
 
         $roles = [
             ['code' => 'SUPER_ADMIN', 'nom' => 'Super Admin', 'system_role' => true],
             ['code' => 'ADMIN_ECOLE', 'nom' => 'Administrateur école', 'system_role' => true],
+            ['code' => 'ADMIN_TENANT', 'nom' => 'Administrateur tenant', 'system_role' => true],
+            ['code' => 'GESTIONNAIRE_ECOLE', 'nom' => 'Gestionnaire école', 'system_role' => true],
             ['code' => 'DIRECTEUR_ETUDES', 'nom' => 'Directeur des études', 'system_role' => true],
             ['code' => 'TITULAIRE', 'nom' => 'Titulaire', 'system_role' => true],
             ['code' => 'ENSEIGNANT', 'nom' => 'Enseignant', 'system_role' => true],
@@ -43,10 +51,34 @@ class BulletinLabCoreSeeder extends Seeder
         ];
 
         foreach ($roles as $role) {
-            DB::table('roles')->updateOrInsert(
-                ['tenant_id' => null, 'code' => $role['code']],
-                ['nom' => $role['nom'], 'system_role' => $role['system_role'], 'created_at' => now(), 'updated_at' => now()]
-            );
+            $model = Role::findOrCreate($role['code'], 'web');
+            $model->forceFill([
+                'tenant_id' => null,
+                'code' => $role['code'],
+                'nom' => $role['nom'],
+                'system_role' => $role['system_role'],
+            ])->save();
+        }
+
+        $rolePermissions = [
+            'SUPER_ADMIN' => ['school.manage', 'teachers.manage', 'classes.manage', 'students.manage', 'assignments.manage', 'notes.enter', 'notes.monitor', 'bulletins.generate', 'proclamations.generate', 'attendance.manage', 'system.templates.manage'],
+            'ADMIN_TENANT' => ['school.manage', 'teachers.manage', 'classes.manage', 'students.manage', 'assignments.manage', 'notes.monitor', 'bulletins.generate', 'proclamations.generate', 'attendance.manage'],
+            'ADMIN_ECOLE' => ['school.manage', 'teachers.manage', 'classes.manage', 'students.manage', 'assignments.manage', 'notes.monitor', 'bulletins.generate', 'proclamations.generate', 'attendance.manage'],
+            'GESTIONNAIRE_ECOLE' => ['teachers.manage', 'classes.manage', 'students.manage', 'assignments.manage', 'notes.monitor', 'bulletins.generate', 'proclamations.generate', 'attendance.manage'],
+            'DIRECTEUR_ETUDES' => ['classes.manage', 'students.manage', 'assignments.manage', 'notes.monitor', 'bulletins.generate', 'proclamations.generate'],
+            'TITULAIRE' => ['notes.enter', 'attendance.manage'],
+            'ENSEIGNANT' => ['notes.enter'],
+            'SECRETARIAT' => ['students.manage', 'attendance.manage'],
+        ];
+
+        foreach ($rolePermissions as $code => $codes) {
+            $role = Role::query()->whereNull('tenant_id')->where('name', $code)->first();
+
+            if ($role === null) {
+                continue;
+            }
+
+            $role->syncPermissions($codes);
         }
     }
 }

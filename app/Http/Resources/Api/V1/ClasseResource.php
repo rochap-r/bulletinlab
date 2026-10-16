@@ -25,6 +25,21 @@ class ClasseResource extends JsonResource
             'code' => $this->code,
             'titulaire_id' => $this->titulaire_id,
             'active' => $this->active,
+            'cycle' => $this->whenLoaded('cycle', fn () => [
+                'id' => $this->cycle->getKey(),
+                'code' => $this->cycle->code,
+                'nom' => $this->cycle->nom,
+            ]),
+            'niveau' => $this->whenLoaded('niveau', fn () => [
+                'id' => $this->niveau->getKey(),
+                'code' => $this->niveau->code,
+                'nom' => $this->niveau->nom,
+            ]),
+            'option' => $this->whenLoaded('option', fn () => $this->option === null ? null : [
+                'id' => $this->option->getKey(),
+                'code' => $this->option->code,
+                'nom' => $this->option->nom,
+            ]),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

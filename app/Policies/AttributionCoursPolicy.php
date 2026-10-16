@@ -8,7 +8,6 @@ use App\Models\Classe;
 use App\Models\ModeleMaximum;
 use App\Models\Utilisateur;
 use Carbon\CarbonImmutable;
-use Illuminate\Database\Eloquent\Builder;
 
 final class AttributionCoursPolicy
 {
@@ -19,19 +18,19 @@ final class AttributionCoursPolicy
     public function viewAny(Utilisateur $utilisateur): bool
     {
         if (! $utilisateur->actif
-            || ! $this->establishmentContext->has()
-            || $utilisateur->etablissement_id !== $this->establishmentContext->id()) {
+            || ! $this->establishmentContext->has()) {
             return false;
         }
 
-        return $utilisateur->roles()
-            ->where('roles.code', 'ENSEIGNANT')
-            ->where(function (Builder $query) use ($utilisateur): void {
-                $query
-                    ->whereNull('roles.tenant_id')
-                    ->orWhere('roles.tenant_id', $utilisateur->tenant_id);
-            })
-            ->exists();
+        if ($utilisateur->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT'])) {
+            return true;
+        }
+
+        if ($utilisateur->etablissement_id !== $this->establishmentContext->id()) {
+            return false;
+        }
+
+        return $utilisateur->hasTenantRole('ENSEIGNANT');
     }
 
     public function viewSlots(

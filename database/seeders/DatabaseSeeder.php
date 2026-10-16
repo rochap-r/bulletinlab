@@ -19,6 +19,8 @@ class DatabaseSeeder extends Seeder
             BulletinLabScientificSeeder::class,
             BulletinLabCommercialeSeeder::class,
             BulletinLabPedagogySeeder::class,
+            BulletinLabMechanicsSeeder::class,
+            BulletinLabElectricalConstructionSeeder::class,
             BulletinLabBaremesSeeder::class,
             BulletinLabPlatformSeeder::class,
             BulletinLabTestDataSeeder::class,
@@ -26,6 +28,16 @@ class DatabaseSeeder extends Seeder
             BulletinLabScenarioEleveSeeder::class,
             BulletinLabScientificDemoSeeder::class,
             BulletinLabPedagogyDemoSeeder::class,
+            BulletinLabAutomotiveDemoSeeder::class,
+            BulletinLabGeneralMechanicsDemoSeeder::class,
+            BulletinLabElectricityDemoSeeder::class,
+            BulletinLabConstructionDemoSeeder::class,
+            BulletinLabCommercialDemoSeeder::class,
         ]);
+
+        if (app()->environment(['local', 'testing'])) {
+            $this->call(TenantAdminDemoSeeder::class);
+            $this->call(AuthDemoSeeder::class);
+        }
     }
 }

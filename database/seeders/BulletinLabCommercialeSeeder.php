@@ -17,6 +17,50 @@ class BulletinLabCommercialeSeeder extends Seeder
         $this->seedCommerciale2();
         $this->seedCommerciale3();
         $this->seedCommerciale4();
+        foreach (range(1, 4) as $year) {
+            $this->applyOfficialCommercialLayout($year);
+        }
+    }
+
+    private function applyOfficialCommercialLayout(int $year): void
+    {
+        $templateId = $this->templateId('COMMERCIALE_'.$year);
+        if ($templateId === null) {
+            return;
+        }
+        $periodIds = DB::table('system_template_periodes')->where('template_id', $templateId)->pluck('id', 'code');
+        $subjects = DB::table('system_template_nodes')->where('template_id', $templateId)->where('type_node', 'MATIERE')->get(['id', 'libelle']);
+        foreach ($subjects as $subject) {
+            if (! in_array($subject->libelle, ['Activités complémentaires', 'Pratique professionnelle'], true)) {
+                continue;
+            }
+            $maximum = $subject->libelle === 'Pratique professionnelle' ? 100 : ($year <= 2 ? 20 : 10);
+            $values = ['P1' => $maximum, 'P2' => $maximum, 'TOTAL_S1' => 2 * $maximum,
+                'P3' => $maximum, 'P4' => $maximum, 'TOTAL_S2' => 2 * $maximum, 'TOTAL_GENERAL' => 4 * $maximum];
+            DB::table('system_template_nodes')->where('id', $subject->id)->update(['metadata' => json_encode(['examens_non_applicables' => true], JSON_THROW_ON_ERROR)]);
+            DB::table('system_template_maxima')->where('node_id', $subject->id)->whereIn('periode_id', [$periodIds['EXAM_S1'], $periodIds['EXAM_S2']])->delete();
+            foreach ($values as $code => $value) {
+                DB::table('system_template_maxima')->updateOrInsert(['node_id' => $subject->id, 'periode_id' => $periodIds[$code]],
+                    ['template_id' => $templateId, 'maxima' => $value, 'coefficient' => 1, 'created_at' => now(), 'updated_at' => now()]);
+            }
+        }
+        $labels = [
+            'Religion' => 'Religion (1)',
+            'Education physique & sportive' => $year === 3 ? 'Education physique' : 'Education phys. & sportive',
+            'Correspondance commerciale anglaise' => $year <= 2 ? 'Correspondance com. angl.' : 'Correspondance com. anglaise',
+            'Correspondance commerciale française' => $year <= 2 ? 'Correspondance com. franc.' : 'Correspondance com. française',
+            'Activités complémentaires' => $year === 1 ? 'Activités compl.(visites guidées)' : ($year === 3 ? 'Act. compl. (visites guidées)' : 'Activités compl. (visites guidées)'),
+            'Opérations des banques et crédits' => 'Op. des banques et des crédits',
+        ];
+        foreach ($labels as $original => $printed) {
+            DB::table('system_template_nodes')->where('template_id', $templateId)->where('type_node', 'MATIERE')->where('libelle', $original)->update(['libelle' => $printed]);
+        }
+        DB::table('system_template_nodes')->where('template_id', $templateId)->where('type_node', 'GROUPE_MAXIMA')->update(['libelle' => 'MAXIMA']);
+        DB::table('system_template_periodes')->where('template_id', $templateId)->where('type_periode', 'REPECHAGE')->update(['actif' => $year !== 4]);
+        DB::table('system_templates_bulletin')->where('id', $templateId)->update([
+            'total_general_maxima' => DB::table('system_template_maxima')->where('template_id', $templateId)->where('periode_id', $periodIds['TOTAL_GENERAL'])->sum('maxima'),
+            'updated_at' => now(),
+        ]);
     }
 
     protected function templateId(string $code): ?int

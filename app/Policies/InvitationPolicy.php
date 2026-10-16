@@ -4,7 +4,6 @@ namespace App\Policies;
 
 use App\Models\Invitation;
 use App\Models\Utilisateur;
-use Illuminate\Database\Eloquent\Builder;
 
 final class InvitationPolicy
 {
@@ -18,18 +17,27 @@ final class InvitationPolicy
 
     public function create(Utilisateur $utilisateur): bool
     {
-        return $this->managesOwnEstablishment($utilisateur);
+        return $this->managesOwnEstablishment($utilisateur)
+            || $this->isTenantAdministrator($utilisateur);
     }
 
     public function viewAny(Utilisateur $utilisateur): bool
     {
-        return $this->managesOwnEstablishment($utilisateur);
+        return $this->managesOwnEstablishment($utilisateur)
+            || $this->isTenantAdministrator($utilisateur);
     }
 
     public function revoke(Utilisateur $utilisateur, Invitation $invitation): bool
     {
-        if ($invitation->tenant_id !== $utilisateur->tenant_id
-            || $invitation->etablissement_id !== $utilisateur->etablissement_id) {
+        if ($invitation->tenant_id !== $utilisateur->tenant_id) {
+            return false;
+        }
+
+        if ($this->isTenantAdministrator($utilisateur)) {
+            return true;
+        }
+
+        if ($invitation->etablissement_id !== $utilisateur->etablissement_id) {
             return false;
         }
 
@@ -49,13 +57,15 @@ final class InvitationPolicy
             return false;
         }
 
-        return $utilisateur->roles()
-            ->whereIn('roles.code', self::MANAGEMENT_ROLE_CODES)
-            ->where(function (Builder $query) use ($etablissement): void {
-                $query
-                    ->whereNull('roles.tenant_id')
-                    ->orWhere('roles.tenant_id', $etablissement->tenant_id);
-            })
-            ->exists();
+        return $utilisateur->hasTenantRole(self::MANAGEMENT_ROLE_CODES, $etablissement->tenant_id);
+    }
+
+    private function isTenantAdministrator(Utilisateur $utilisateur): bool
+    {
+        if (! $utilisateur->actif) {
+            return false;
+        }
+
+        return $utilisateur->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT']);
     }
 }

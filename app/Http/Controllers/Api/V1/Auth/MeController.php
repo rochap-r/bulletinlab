@@ -16,6 +16,6 @@ class MeController extends Controller
 
         abort_unless($utilisateur instanceof Utilisateur, Response::HTTP_UNAUTHORIZED);
 
-        return new UtilisateurResource($utilisateur);
+        return new UtilisateurResource($utilisateur->loadMissing(['roles.permissions', 'tenant', 'etablissement']));
     }
 }

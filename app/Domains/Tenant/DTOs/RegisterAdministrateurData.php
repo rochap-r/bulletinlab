@@ -8,7 +8,7 @@ final readonly class RegisterAdministrateurData
         public string $nom,
         public ?string $postnom,
         public ?string $prenom,
-        public string $email,
+        public ?string $email,
         public string $telephone,
         public string $motDePasse,
     ) {}

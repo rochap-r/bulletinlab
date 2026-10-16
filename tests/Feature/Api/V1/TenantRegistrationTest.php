@@ -30,6 +30,7 @@ function tenantRegistrationPayloadForTenantTests(array $overrides = []): array
         'admin_email' => 'admin.lumiere@example.test',
         'admin_telephone' => '+243811000001',
         'mot_de_passe' => 'secret-password',
+        'mot_de_passe_confirmation' => 'secret-password',
         ...$overrides,
     ];
 }
@@ -62,16 +63,46 @@ test('a tenant can self-register and is created in pending status', function () 
         'tenant_id' => $tenant->id,
         'email' => 'admin.lumiere@example.test',
         'telephone' => '+243811000001',
+        'telephone_normalise' => '+243811000001',
+        'etablissement_id' => null,
         'actif' => true,
     ]);
 
     $utilisateur = Utilisateur::query()->where('tenant_id', $tenant->id)->firstOrFail();
-    $this->assertTrue($utilisateur->roles()->where('code', 'ADMIN_ECOLE')->exists());
+    $this->assertTrue($utilisateur->roles()->where('code', 'ADMIN_TENANT')->exists());
 
     $this->assertDatabaseHas('audit_logs', [
         'tenant_id' => $tenant->id,
         'action' => 'TENANT_INSCRIT_EN_ATTENTE',
     ]);
+});
+
+test('the administrator phone is normalized to E.164 during self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'admin_telephone' => '00243 811 000 001',
+    ]))->assertCreated();
+
+    $this->assertDatabaseHas('utilisateurs', [
+        'telephone' => '+243811000001',
+        'telephone_normalise' => '+243811000001',
+    ]);
+});
+
+test('a national trunk zero phone is normalized during self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'admin_telephone' => '0811000001',
+    ]))->assertCreated();
+
+    $this->assertDatabaseHas('utilisateurs', [
+        'telephone' => '+243811000001',
+        'telephone_normalise' => '+243811000001',
+    ]);
+});
+
+test('a non E.164 administrator phone is rejected during self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'admin_telephone' => '0811',
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['admin_telephone']);
 });
 
 test('a registered tenant slug is disambiguated with a numeric suffix', function () {
@@ -100,9 +131,30 @@ test('the tenant type must be a known type for self-registration', function () {
     ]))->assertUnprocessable()->assertJsonValidationErrors(['type_tenant']);
 });
 
-test('the establishment name is required for self-registration', function () {
+test('a tenant can self-register without creating an establishment', function () {
+    $payload = tenantRegistrationPayloadForTenantTests([
+        'etablissement_nom' => null,
+        'etablissement_code_ministere' => null,
+        'etablissement_province_educationnelle' => null,
+        'etablissement_ville' => null,
+        'etablissement_commune_territoire' => null,
+        'etablissement_telephone' => null,
+        'etablissement_email' => null,
+    ]);
+
+    $this->postJson('/api/v1/public/tenants', $payload)
+        ->assertCreated()
+        ->assertJsonPath('data.etablissement', null);
+
+    $tenant = Tenant::query()->where('slug', 'complexe-scolaire-lumiere')->firstOrFail();
+
+    expect(Etablissement::query()->where('tenant_id', $tenant->id)->count())->toBe(0)
+        ->and(Utilisateur::query()->where('tenant_id', $tenant->id)->value('etablissement_id'))->toBeNull();
+});
+
+test('orphan establishment fields are rejected without an establishment name', function () {
     $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
-        'etablissement_nom' => '',
+        'etablissement_nom' => null,
     ]))->assertUnprocessable()->assertJsonValidationErrors(['etablissement_nom']);
 });
 
@@ -112,10 +164,29 @@ test('the administrator email must be valid for self-registration', function () 
     ]))->assertUnprocessable()->assertJsonValidationErrors(['admin_email']);
 });
 
+test('the administrator email is optional for self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'admin_email' => null,
+    ]))->assertCreated();
+});
+
+test('password confirmation is required for self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'mot_de_passe_confirmation' => 'different-password',
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
+});
+
 test('a weak password is rejected during self-registration', function () {
     $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
         'mot_de_passe' => 'short',
     ]))->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
+});
+
+test('a six character password is accepted during self-registration', function () {
+    $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
+        'mot_de_passe' => 'abcdef',
+        'mot_de_passe_confirmation' => 'abcdef',
+    ]))->assertCreated();
 });
 
 test('an unknown field is rejected during self-registration', function () {

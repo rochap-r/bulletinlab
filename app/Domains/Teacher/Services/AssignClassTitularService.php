@@ -8,12 +8,14 @@ use App\Domains\Teacher\Exceptions\ClassTitularAssignmentConflictException;
 use App\Models\AnneeScolaire;
 use App\Models\AuditLog;
 use App\Models\Classe;
+use App\Models\Role;
 use App\Models\TitulaireClasse;
 use App\Models\Utilisateur;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 final class AssignClassTitularService
 {
@@ -29,6 +31,8 @@ final class AssignClassTitularService
                 ->where('etablissement_id', $class->etablissement_id)
                 ->lockForUpdate()
                 ->firstOrFail();
+
+            Gate::forUser($actor)->authorize('assignClassTitular', $lockedClass);
 
             if (! $lockedClass->active) {
                 throw new ClassTitularAssignmentConflictException(
@@ -151,6 +155,8 @@ final class AssignClassTitularService
 
     private function resolveTitular(Classe $class, int $titularId): Utilisateur
     {
+        // Le préfet / directeur des études nomme un enseignant titulaire de
+        // la classe : le candidat peut être ENSEIGNANT ou déjà TITULAIRE.
         $titular = Utilisateur::query()
             ->whereKey($titularId)
             ->where('tenant_id', $class->tenant_id)
@@ -158,12 +164,8 @@ final class AssignClassTitularService
             ->where('actif', true)
             ->whereHas('roles', function (Builder $query) use ($class): void {
                 $query
-                    ->where('roles.code', 'TITULAIRE')
-                    ->where(function (Builder $roleQuery) use ($class): void {
-                        $roleQuery
-                            ->whereNull('roles.tenant_id')
-                            ->orWhere('roles.tenant_id', $class->tenant_id);
-                    });
+                    ->whereIn('roles.name', ['ENSEIGNANT', 'TITULAIRE'])
+                    ->validForTenant($class->tenant_id);
             })
             ->lockForUpdate()
             ->first();
@@ -175,7 +177,32 @@ final class AssignClassTitularService
             );
         }
 
+        $this->ensureTitularRole($titular, $class->tenant_id);
+
         return $titular;
+    }
+
+    /**
+     * La nomination confère le rôle TITULAIRE en conservant ENSEIGNANT :
+     * l'enseignant nommé cumule les deux rôles.
+     */
+    private function ensureTitularRole(Utilisateur $titular, int $tenantId): void
+    {
+        if ($titular->hasTenantRole('TITULAIRE', $tenantId)) {
+            return;
+        }
+
+        $titularRole = Role::query()
+            ->where(function (Builder $query): void {
+                $query->where('name', 'TITULAIRE')->orWhere('code', 'TITULAIRE');
+            })
+            ->validForTenant($tenantId)
+            ->orderByRaw('tenant_id IS NULL DESC')
+            ->first();
+
+        if ($titularRole) {
+            $titular->assignRole($titularRole);
+        }
     }
 
     /**

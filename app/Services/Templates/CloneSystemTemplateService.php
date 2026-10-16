@@ -14,7 +14,23 @@ class CloneSystemTemplateService
 {
     public function cloneForClasse(Classe $classe): ModeleBulletin
     {
-        return DB::transaction(function () use ($classe) {
+        return DB::transaction(function () use ($classe): ModeleBulletin {
+            $classe = Classe::query()
+                ->whereKey($classe->getKey())
+                ->where('tenant_id', $classe->tenant_id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $existing = ModeleBulletin::query()
+                ->where('tenant_id', $classe->tenant_id)
+                ->where('classe_id', $classe->getKey())
+                ->where('annee_scolaire_id', $classe->annee_scolaire_id)
+                ->first();
+
+            if ($existing !== null) {
+                return $existing;
+            }
+
             $template = $classe->systemTemplate()->with(['nodes', 'periodes', 'maxima', 'blocs'])->firstOrFail();
 
             $modele = ModeleBulletin::create([

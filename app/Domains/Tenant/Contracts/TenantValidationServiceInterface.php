@@ -10,4 +10,6 @@ interface TenantValidationServiceInterface
     public function activate(Tenant $tenant, UtilisateurPlateforme $validePar): Tenant;
 
     public function reject(Tenant $tenant, UtilisateurPlateforme $validePar, string $motif): Tenant;
+
+    public function reexamine(Tenant $tenant, UtilisateurPlateforme $validePar): Tenant;
 }

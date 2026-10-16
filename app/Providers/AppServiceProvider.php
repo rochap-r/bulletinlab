@@ -31,9 +31,13 @@ use App\Domains\Tenant\Services\IdempotencyService;
 use App\Domains\Tenant\Services\TenantRegistrationService;
 use App\Domains\Tenant\Services\TenantService;
 use App\Domains\Tenant\Services\TenantValidationService;
+use App\Support\PhoneNumberNormalizer;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Events\QueryExecuted;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -86,10 +90,19 @@ class AppServiceProvider extends ServiceProvider
     {
         Model::shouldBeStrict(! $this->app->isProduction());
 
+        $this->logSlowQueries();
+
         RateLimiter::for('auth.login', function (Request $request): array {
+            $identifiant = trim((string) $request->input('identifiant'));
+
+            try {
+                $identifiant = PhoneNumberNormalizer::normalize($identifiant);
+            } catch (\InvalidArgumentException) {
+            }
+
             $credentialKey = implode('|', [
                 Str::lower(trim((string) $request->input('tenant_slug'))),
-                Str::lower(trim((string) $request->input('identifiant'))),
+                Str::lower($identifiant),
                 $request->ip(),
             ]);
 
@@ -108,6 +121,22 @@ class AppServiceProvider extends ServiceProvider
             return [
                 Limit::perMinute(30)->by('ip:'.hash('sha256', (string) $request->ip())),
                 Limit::perMinute(5)->by('credential:'.hash('sha256', $credentialKey)),
+            ];
+        });
+
+        RateLimiter::for('me.password', function (Request $request): Limit {
+            return Limit::perMinute(5)->by(
+                'user:'.($request->user()?->getAuthIdentifier() ?? 'guest')
+                .'|ip:'.hash('sha256', (string) $request->ip())
+            );
+        });
+
+        RateLimiter::for('public.memberships', function (Request $request): array {
+            $phoneKey = hash('sha256', Str::lower(trim((string) $request->input('telephone'))));
+
+            return [
+                Limit::perMinute(10)->by('ip:'.hash('sha256', (string) $request->ip())),
+                Limit::perMinute(5)->by('phone:'.$phoneKey),
             ];
         });
 
@@ -132,13 +161,48 @@ class AppServiceProvider extends ServiceProvider
         });
 
         RateLimiter::for('public.tenant.registration', function (Request $request): array {
-            $emailKey = hash('sha256', Str::lower(trim((string) $request->input('admin_email'))));
-
-            return [
+            $limits = [
                 Limit::perMinute(10)->by('ip:'.hash('sha256', (string) $request->ip())),
                 Limit::perHour(20)->by('ip-hour:'.hash('sha256', (string) $request->ip())),
-                Limit::perHour(3)->by('email:'.$emailKey),
             ];
+
+            // Sans e-mail, tous les inscrits partageraient le même seau : on ne
+            // limite par e-mail que les inscriptions qui en fournissent un.
+            if ($request->filled('admin_email')) {
+                $emailKey = hash('sha256', Str::lower(trim((string) $request->input('admin_email'))));
+                $limits[] = Limit::perHour(3)->by('email:'.$emailKey);
+            }
+
+            return $limits;
+        });
+    }
+
+    /**
+     * Journalise les requêtes SQL lentes sur le canal `app`
+     * (désactivé en tests et quand LOG_SLOW_QUERIES_MS=0).
+     */
+    private function logSlowQueries(): void
+    {
+        if ($this->app->runningUnitTests()) {
+            return;
+        }
+
+        $thresholdMs = (int) env('LOG_SLOW_QUERIES_MS', 500);
+
+        if ($thresholdMs <= 0) {
+            return;
+        }
+
+        DB::listen(function (QueryExecuted $query) use ($thresholdMs): void {
+            if ($query->time < $thresholdMs) {
+                return;
+            }
+
+            Log::channel('app')->warning('db.slow_query', [
+                'sql' => $query->sql,
+                'time_ms' => $query->time,
+                'connection' => $query->connectionName,
+            ]);
         });
     }
 }

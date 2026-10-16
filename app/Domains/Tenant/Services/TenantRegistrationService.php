@@ -20,7 +20,9 @@ final class TenantRegistrationService implements TenantRegistrationServiceInterf
 
     public function register(RegisterTenantData $data): RegisteredTenantResult
     {
-        return DB::transaction(function () use ($data): RegisteredTenantResult {
+        $passwordHash = $this->hasher->make($data->administrateur->motDePasse);
+
+        return DB::transaction(function () use ($data, $passwordHash): RegisteredTenantResult {
             $tenant = Tenant::query()->create([
                 'uuid' => (string) Str::uuid(),
                 'nom_espace' => $data->nomEspace,
@@ -29,38 +31,41 @@ final class TenantRegistrationService implements TenantRegistrationServiceInterf
                 'statut' => 'EN_ATTENTE',
             ]);
 
-            $etablissement = Etablissement::query()->create([
-                'tenant_id' => $tenant->getKey(),
-                'nom' => $data->etablissement->nom,
-                'code_ministere' => $data->etablissement->codeMinistere,
-                'province_educationnelle' => $data->etablissement->provinceEducationnelle,
-                'province' => $data->etablissement->province,
-                'ville' => $data->etablissement->ville,
-                'commune_territoire' => $data->etablissement->communeTerritoire,
-                'adresse' => $data->etablissement->adresse,
-                'telephone' => $data->etablissement->telephone,
-                'email' => $data->etablissement->email,
-                'actif' => true,
-            ]);
+            $etablissement = $data->etablissement === null
+                ? null
+                : Etablissement::query()->create([
+                    'tenant_id' => $tenant->getKey(),
+                    'nom' => $data->etablissement->nom,
+                    'type_etablissement' => $data->etablissement->type ?? 'MIXTE',
+                    'code_ministere' => $data->etablissement->codeMinistere,
+                    'province_educationnelle' => $data->etablissement->provinceEducationnelle,
+                    'province' => $data->etablissement->province,
+                    'ville' => $data->etablissement->ville,
+                    'commune_territoire' => $data->etablissement->communeTerritoire,
+                    'adresse' => $data->etablissement->adresse,
+                    'telephone' => $data->etablissement->telephone,
+                    'email' => $data->etablissement->email,
+                    'actif' => true,
+                ]);
 
             $role = Role::query()->firstOrCreate(
-                ['tenant_id' => $tenant->getKey(), 'code' => 'ADMIN_ECOLE'],
-                ['nom' => 'Administrateur école', 'system_role' => false],
+                ['tenant_id' => null, 'name' => 'ADMIN_TENANT'],
+                ['code' => 'ADMIN_TENANT', 'nom' => 'Administrateur tenant', 'guard_name' => 'web', 'system_role' => true],
             );
 
             $utilisateur = Utilisateur::query()->create([
                 'tenant_id' => $tenant->getKey(),
-                'etablissement_id' => $etablissement->getKey(),
+                'etablissement_id' => null,
                 'nom' => $data->administrateur->nom,
                 'postnom' => $data->administrateur->postnom,
                 'prenom' => $data->administrateur->prenom,
                 'email' => $data->administrateur->email,
                 'telephone' => $data->administrateur->telephone,
-                'mot_de_passe' => $this->hasher->make($data->administrateur->motDePasse),
+                'mot_de_passe' => $passwordHash,
                 'actif' => true,
             ]);
 
-            $utilisateur->roles()->attach($role->getKey());
+            $utilisateur->assignRole($role);
 
             AuditLog::query()->create([
                 'tenant_id' => $tenant->getKey(),
@@ -69,7 +74,7 @@ final class TenantRegistrationService implements TenantRegistrationServiceInterf
                 'table_cible' => $tenant->getTable(),
                 'ligne_cible_id' => $tenant->getKey(),
                 'nouvelles_valeurs' => [
-                    'etablissement_id' => $etablissement->getKey(),
+                    'etablissement_id' => $etablissement?->getKey(),
                     'administrateur_id' => $utilisateur->getKey(),
                 ],
             ]);
@@ -81,6 +86,11 @@ final class TenantRegistrationService implements TenantRegistrationServiceInterf
     private function uniqueSlug(string $nom): string
     {
         $base = Str::slug($nom);
+
+        if ($base === '') {
+            $base = 'espace';
+        }
+
         $slug = $base;
         $suffix = 1;
 

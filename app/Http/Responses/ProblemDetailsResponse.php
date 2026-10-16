@@ -31,6 +31,7 @@ use Illuminate\Auth\AuthenticationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Context;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
@@ -61,6 +62,14 @@ final class ProblemDetailsResponse
 
         if ($exception instanceof NoteVersionConflictException) {
             $problem['code'] = 'NOTE_VERSION_CONFLICT';
+        }
+
+        if ($status >= 500) {
+            $traceId = Context::get('request_id');
+
+            if (is_string($traceId) && $traceId !== '') {
+                $problem['trace_id'] = $traceId;
+            }
         }
 
         $headers = $exception instanceof HttpExceptionInterface

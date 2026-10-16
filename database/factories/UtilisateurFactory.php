@@ -21,7 +21,7 @@ class UtilisateurFactory extends Factory
             'tenant_id' => 1,
             'nom' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
-            'telephone' => fake()->phoneNumber(),
+            'telephone' => '+243'.fake()->unique()->numerify('#########'),
             'mot_de_passe' => bcrypt('password'),
             'actif' => true,
         ];

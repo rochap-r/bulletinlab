@@ -8,6 +8,7 @@ use App\Models\Tenant;
 use App\Models\Utilisateur;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Context;
 use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -37,6 +38,8 @@ class TenantMiddleware
             throw new TenantNotFoundException;
         }
 
+        abort_unless($user->actif, Response::HTTP_FORBIDDEN);
+
         $tenant = Tenant::query()
             ->whereKey($user->tenant_id)
             ->whereIn('statut', ['EN_ATTENTE', 'ESSAI', 'ACTIF'])
@@ -48,10 +51,19 @@ class TenantMiddleware
 
         $this->tenantContext->set($tenant);
 
+        setPermissionsTeamId($tenant->getKey());
+
+        Context::add([
+            'tenant_id' => $tenant->getKey(),
+            'user_id' => $user->getKey(),
+            'user_type' => 'tenant',
+        ]);
+
         try {
             return $next($request);
         } finally {
             $this->tenantContext->clear();
+            setPermissionsTeamId(null);
         }
     }
 }

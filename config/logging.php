@@ -65,6 +65,39 @@ return [
             'replace_placeholders' => true,
         ],
 
+        /*
+         * Operational channels: one file per concern, daily rotation.
+         * - app: application events, slow queries, unexpected states.
+         * - security: authentication, password changes, tenant validation.
+         * - http: one line per API request (method, path, status, duration).
+         * Every record carries the shared context (request_id, ip, tenant_id,
+         * user_id) set by App\Http\Middleware\RequestLogging.
+         */
+
+        'app' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/app.log'),
+            'level' => env('LOG_LEVEL', 'debug'),
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
+        'security' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/security.log'),
+            'level' => 'info',
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
+        'http' => [
+            'driver' => 'daily',
+            'path' => storage_path('logs/http.log'),
+            'level' => 'info',
+            'days' => env('LOG_DAILY_DAYS', 14),
+            'replace_placeholders' => true,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),

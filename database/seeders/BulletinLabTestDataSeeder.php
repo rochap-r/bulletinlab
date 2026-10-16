@@ -64,6 +64,7 @@ class BulletinLabTestDataSeeder extends Seeder
             ['tenant_id' => $tenantId, 'telephone' => '+243000000002'],
             [
                 'etablissement_id' => $etablissementId,
+                'telephone_normalise' => '+243000000002',
                 'nom' => 'Admin',
                 'postnom' => 'Test',
                 'prenom' => 'User',
@@ -241,6 +242,7 @@ class BulletinLabTestDataSeeder extends Seeder
             ['tenant_id' => $tenantId, 'telephone' => '+243000000003'],
             [
                 'etablissement_id' => $etablissementId,
+                'telephone_normalise' => '+243000000003',
                 'nom' => 'Prof',
                 'postnom' => 'Test',
                 'prenom' => 'Enseignant',

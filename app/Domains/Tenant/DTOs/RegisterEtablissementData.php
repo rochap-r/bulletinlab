@@ -14,5 +14,6 @@ final readonly class RegisterEtablissementData
         public ?string $adresse,
         public ?string $telephone,
         public ?string $email,
+        public ?string $type = null,
     ) {}
 }

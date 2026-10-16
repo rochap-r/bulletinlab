@@ -16,7 +16,9 @@ class Etablissement extends Model
     protected $fillable = [
         'tenant_id',
         'nom',
+        'type_etablissement',
         'code_ministere',
+        'code_interne',
         'province_educationnelle',
         'province',
         'ville',
@@ -28,5 +30,10 @@ class Etablissement extends Model
         'sceau_path',
         'signature_directeur_path',
         'actif',
+    ];
+
+    protected $attributes = [
+        'type_etablissement' => 'MIXTE',
+        'actif' => true,
     ];
 }

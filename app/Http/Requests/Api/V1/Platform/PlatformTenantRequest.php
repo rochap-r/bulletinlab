@@ -22,7 +22,19 @@ final class PlatformTenantRequest extends FormRequest
         return [
             'nom_espace' => ['required', 'string', 'max:150'],
             'type_tenant' => ['required', Rule::in(['ECOLE', 'GROUPE_ECOLES', 'ENSEIGNANT_INDIVIDUEL'])],
-            'statut' => ['nullable', Rule::in(['EN_ATTENTE', 'ESSAI', 'ACTIF', 'SUSPENDU', 'RESILIE', 'REFUSE'])],
+            // Les statuts de validation (EN_ATTENTE, ACTIF, REFUSE) transitent
+            // exclusivement par activation / refus / réexamen (audités).
+            'statut' => ['nullable', Rule::in(['ESSAI', 'SUSPENDU', 'RESILIE'])],
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'statut.in' => 'Le statut EN_ATTENTE, ACTIF ou REFUSE relève de la validation (activation, refus, réexamen).',
         ];
     }
 }

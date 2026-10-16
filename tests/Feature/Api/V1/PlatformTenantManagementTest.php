@@ -1,8 +1,10 @@
 <?php
 
 use App\Models\Etablissement;
+use App\Models\Role;
 use App\Models\RolePlateforme;
 use App\Models\Tenant;
+use App\Models\Utilisateur;
 use App\Models\UtilisateurPlateforme;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -151,12 +153,36 @@ test('a tenant can be updated', function () {
         ->putJson("/api/v1/platform/tenants/{$tenant->id}", [
             'nom_espace' => 'Complexe Epsilon Révisé',
             'type_tenant' => 'GROUPE_ECOLES',
-            'statut' => 'ACTIF',
+            'statut' => 'SUSPENDU',
         ])
         ->assertOk()
         ->assertJsonPath('data.nom_espace', 'Complexe Epsilon Révisé')
         ->assertJsonPath('data.type_tenant', 'GROUPE_ECOLES')
-        ->assertJsonPath('data.statut', 'ACTIF');
+        ->assertJsonPath('data.statut', 'SUSPENDU');
+});
+
+test('updating a tenant cannot bypass the validation flow', function () {
+    $token = makePlatformTenantAdminToken();
+    $tenant = Tenant::query()->create([
+        'uuid' => (string) Str::uuid(),
+        'nom_espace' => 'Complexe Bypass',
+        'slug' => 'complexe-bypass',
+        'type_tenant' => 'ECOLE',
+        'statut' => 'ESSAI',
+    ]);
+
+    foreach (['EN_ATTENTE', 'ACTIF', 'REFUSE'] as $statut) {
+        $this->withToken($token)
+            ->putJson("/api/v1/platform/tenants/{$tenant->id}", [
+                'nom_espace' => 'Complexe Bypass',
+                'type_tenant' => 'ECOLE',
+                'statut' => $statut,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['statut']);
+    }
+
+    expect($tenant->fresh()->statut)->toBe('ESSAI');
 });
 
 test('a tenant detail returns its establishments', function () {
@@ -379,4 +405,88 @@ test('refusing a non-pending tenant conflicts', function () {
             'motif' => 'Nouveau motif',
         ])
         ->assertStatus(409);
+});
+
+test('the platform can filter tenants by status for the pending queue', function () {
+    $token = makePlatformTenantAdminToken();
+    createPendingTenantForAccessTests();
+    Tenant::query()->create([
+        'uuid' => (string) Str::uuid(),
+        'nom_espace' => 'Complexe Filtre Actif',
+        'slug' => 'complexe-filtre-actif',
+        'type_tenant' => 'ECOLE',
+        'statut' => 'ACTIF',
+    ]);
+
+    $this->withToken($token)
+        ->getJson('/api/v1/platform/tenants?statut=EN_ATTENTE')
+        ->assertOk()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.statut', 'EN_ATTENTE');
+
+    $this->withToken($token)
+        ->getJson('/api/v1/platform/tenants?statut=INCONNU')
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['statut']);
+});
+
+test('the platform can send a refused tenant back for review', function () {
+    $token = makePlatformTenantAdminToken();
+    $tenant = createPendingTenantForAccessTests('REFUSE');
+    $tenant->update(['motif_refus' => 'Dossier incomplet.', 'valide_at' => now(), 'valide_par_id' => 1]);
+
+    $this->withToken($token)
+        ->postJson("/api/v1/platform/tenants/{$tenant->id}/reexamen")
+        ->assertOk()
+        ->assertJsonPath('data.statut', 'EN_ATTENTE')
+        ->assertJsonPath('data.motif_refus', null);
+
+    $fresh = $tenant->fresh();
+    expect($fresh->statut)->toBe('EN_ATTENTE');
+    expect($fresh->motif_refus)->toBeNull();
+
+    $this->assertDatabaseHas('audit_logs', [
+        'tenant_id' => $tenant->id,
+        'action' => 'TENANT_REEXAMEN',
+    ]);
+});
+
+test('reexamining a non-refused tenant conflicts', function () {
+    $token = makePlatformTenantAdminToken();
+    $tenant = createPendingTenantForAccessTests();
+
+    $this->withToken($token)
+        ->postJson("/api/v1/platform/tenants/{$tenant->id}/reexamen")
+        ->assertStatus(409);
+
+    expect($tenant->fresh()->statut)->toBe('EN_ATTENTE');
+});
+
+test('a tenant detail exposes its administrator, validator and history', function () {
+    $token = makePlatformTenantAdminToken();
+    $tenant = createPendingTenantForAccessTests();
+    $admin = Utilisateur::query()->create([
+        'tenant_id' => $tenant->id,
+        'nom' => 'Directeur',
+        'telephone' => '+243811000099',
+        'mot_de_passe' => Hash::make('secret-password'),
+        'actif' => true,
+    ]);
+    $role = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'name' => 'ADMIN_TENANT'],
+        ['code' => 'ADMIN_TENANT', 'nom' => 'Administrateur tenant', 'guard_name' => 'web', 'system_role' => true],
+    );
+    $admin->assignRole($role);
+
+    $this->withToken($token)
+        ->postJson("/api/v1/platform/tenants/{$tenant->id}/activation")
+        ->assertOk();
+
+    $this->withToken($token)
+        ->getJson("/api/v1/platform/tenants/{$tenant->id}")
+        ->assertOk()
+        ->assertJsonPath('data.administrateur.telephone', '+243811000099')
+        ->assertJsonPath('data.administrateur.roles.0', 'ADMIN_TENANT')
+        ->assertJsonPath('data.valide_par.email', 'tenants-admin@plateforme.test')
+        ->assertJsonPath('data.audits.0.action', 'TENANT_VALIDE');
 });

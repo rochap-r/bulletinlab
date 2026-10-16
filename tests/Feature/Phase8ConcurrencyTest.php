@@ -461,8 +461,8 @@ function seedMysqlData(): array
 
     $pdo->exec(
         "INSERT INTO utilisateurs
-            (tenant_id, etablissement_id, nom, postnom, prenom, telephone, email, mot_de_passe, actif, public_id, created_at, updated_at)
-         VALUES ($tenantId, $etablissementId, 'Admin', '{$prefix}', 'User', '+24300000000', 'admin-{$prefix}@test.com',
+            (tenant_id, etablissement_id, nom, postnom, prenom, telephone, telephone_normalise, email, mot_de_passe, actif, public_id, created_at, updated_at)
+         VALUES ($tenantId, $etablissementId, 'Admin', '{$prefix}', 'User', '+24300000000', '+24300000000', 'admin-{$prefix}@test.com',
                  '".Hash::make('password123')."', 1, '{$publicId()}', '$now', '$now')",
     );
     $userId = (int) $pdo->lastInsertId();

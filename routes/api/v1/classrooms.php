@@ -2,7 +2,19 @@
 
 use App\Http\Controllers\Api\V1\AttendanceController;
 use App\Http\Controllers\Api\V1\ClasseController;
+use App\Http\Controllers\Api\V1\CourseAssignmentSpreadsheetController;
+use App\Http\Controllers\Api\V1\ReferentielController;
+use App\Http\Controllers\Api\V1\TitularAssignmentController;
 use Illuminate\Support\Facades\Route;
+
+Route::get('referentiels', [ReferentielController::class, 'index'])
+    ->name('referentiels.index');
+
+Route::post('classes/organisation', [ClasseController::class, 'organize'])
+    ->name('classes.organisation.store');
+Route::put('titulariats', [TitularAssignmentController::class, 'save'])->name('titulariats.update');
+Route::get('titulariats/excel/modele', [TitularAssignmentController::class, 'template'])->name('titulariats.excel.modele');
+Route::post('titulariats/excel/apercu', [TitularAssignmentController::class, 'preview'])->name('titulariats.excel.apercu');
 
 Route::apiResource('classes', ClasseController::class)
     ->parameters(['classes' => 'classe'])
@@ -11,6 +23,16 @@ Route::post('classes/{classe}/archivage', [ClasseController::class, 'archive'])
     ->name('classes.archivage.store');
 Route::get('classes/{classe}/cours', [ClasseController::class, 'courses'])
     ->name('classes.cours.index');
+Route::get('classes/{classe}/attributions-excel/modele', [CourseAssignmentSpreadsheetController::class, 'template'])
+    ->whereNumber('classe')->name('classes.attributions-excel.modele');
+Route::post('classes/{classe}/attributions-excel/apercu', [CourseAssignmentSpreadsheetController::class, 'preview'])
+    ->whereNumber('classe')->name('classes.attributions-excel.apercu');
+Route::put('classes/{classe}/equipe-pedagogique', [ClasseController::class, 'saveTeachingTeam'])
+    ->whereNumber('classe')
+    ->name('classes.equipe-pedagogique.update');
+Route::post('classes/{classe}/configuration-cours', [ClasseController::class, 'initializeCourses'])
+    ->whereNumber('classe')
+    ->name('classes.configuration-cours.store');
 Route::put(
     'classes/{classe}/cours/{node}/attribution',
     [ClasseController::class, 'assignCourseTeacher'],

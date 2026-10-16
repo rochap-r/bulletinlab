@@ -8,6 +8,7 @@ use App\Models\AuditLog;
 use App\Models\Tenant;
 use App\Models\UtilisateurPlateforme;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 final class TenantValidationService implements TenantValidationServiceInterface
 {
@@ -24,6 +25,11 @@ final class TenantValidationService implements TenantValidationServiceInterface
             ]);
 
             $this->record($locked, $validePar, 'TENANT_VALIDE');
+
+            Log::channel('security')->info('tenant.activated', [
+                'tenant_id' => $locked->getKey(),
+                'by_platform_user_id' => $validePar->getKey(),
+            ]);
 
             return $locked->refresh();
         }, attempts: 3);
@@ -42,6 +48,40 @@ final class TenantValidationService implements TenantValidationServiceInterface
             ]);
 
             $this->record($locked, $validePar, 'TENANT_REFUSE');
+
+            Log::channel('security')->info('tenant.rejected', [
+                'tenant_id' => $locked->getKey(),
+                'by_platform_user_id' => $validePar->getKey(),
+            ]);
+
+            return $locked->refresh();
+        }, attempts: 3);
+    }
+
+    public function reexamine(Tenant $tenant, UtilisateurPlateforme $validePar): Tenant
+    {
+        return DB::transaction(function () use ($tenant, $validePar): Tenant {
+            $locked = Tenant::query()->lockForUpdate()->find($tenant->getKey());
+
+            if ($locked === null || $locked->statut !== 'REFUSE') {
+                throw new TenantValidationConflictException(
+                    'Only a tenant with status REFUSE can be sent back for review.'
+                );
+            }
+
+            $locked->update([
+                'statut' => 'EN_ATTENTE',
+                'valide_at' => null,
+                'valide_par_id' => null,
+                'motif_refus' => null,
+            ]);
+
+            $this->record($locked, $validePar, 'TENANT_REEXAMEN');
+
+            Log::channel('security')->info('tenant.reexamined', [
+                'tenant_id' => $locked->getKey(),
+                'by_platform_user_id' => $validePar->getKey(),
+            ]);
 
             return $locked->refresh();
         }, attempts: 3);

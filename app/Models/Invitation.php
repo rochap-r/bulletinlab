@@ -30,6 +30,10 @@ class Invitation extends Model
         'revoked_at' => 'datetime',
     ];
 
+    protected $hidden = [
+        'token_hash',
+    ];
+
     public function tenant(): BelongsTo
     {
         return $this->belongsTo(Tenant::class);

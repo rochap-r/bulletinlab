@@ -10,7 +10,7 @@ final readonly class RegisteredTenantResult
 {
     public function __construct(
         public Tenant $tenant,
-        public Etablissement $etablissement,
+        public ?Etablissement $etablissement,
         public Utilisateur $utilisateur,
     ) {}
 }
