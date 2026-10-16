@@ -2,11 +2,22 @@
 
 use App\Http\Controllers\Api\V1\ImportMyCourseAssignmentNotesController;
 use App\Http\Controllers\Api\V1\MyClassController;
+use App\Http\Controllers\Api\V1\MyClassStudentController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentGradeSheetController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentSlotController;
 use App\Http\Controllers\Api\V1\UpsertMyCourseAssignmentNoteController;
 use Illuminate\Support\Facades\Route;
+
+Route::prefix('me/classes/{classe}/eleves')->name('me.classes.eleves.')->whereNumber('classe')->group(function (): void {
+    Route::get('excel/modele', [MyClassStudentController::class, 'template'])->name('excel.modele');
+    Route::post('excel/apercu', [MyClassStudentController::class, 'preview'])->name('excel.apercu');
+    Route::get('/', [MyClassStudentController::class, 'index'])->name('index');
+    Route::post('/', [MyClassStudentController::class, 'store'])->name('store');
+    Route::get('{inscription}', [MyClassStudentController::class, 'show'])->whereNumber('inscription')->name('show');
+    Route::put('{inscription}', [MyClassStudentController::class, 'update'])->whereNumber('inscription')->name('update');
+    Route::delete('{inscription}', [MyClassStudentController::class, 'destroy'])->whereNumber('inscription')->name('destroy');
+});
 
 Route::get('me/classes', MyClassController::class)
     ->name('me.classes.index');

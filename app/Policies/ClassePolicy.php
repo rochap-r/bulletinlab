@@ -14,6 +14,15 @@ final class ClassePolicy
         private EstablishmentContext $establishmentContext,
     ) {}
 
+    public function manageOwnClassStudents(Utilisateur $utilisateur, Classe $classe): bool
+    {
+        return $classe->active
+            && $utilisateur->etablissement_id === $classe->etablissement_id
+            && $classe->titulaire_id === $utilisateur->getKey()
+            && $utilisateur->hasTenantRole(['ENSEIGNANT', 'TITULAIRE'], $classe->tenant_id)
+            && $this->resolveEstablishment($utilisateur, $classe) !== null;
+    }
+
     public function createEnrollment(
         Utilisateur $utilisateur,
         Classe $classe,

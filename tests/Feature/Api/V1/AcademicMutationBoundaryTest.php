@@ -1983,7 +1983,7 @@ test('enrollment rolls back without an active report card model and rejects clos
         ->assertHeader('Content-Type', 'application/problem+json')
         ->assertJsonPath(
             'detail',
-            'No active report card configuration is available for this class.',
+            'La configuration du bulletin de cette classe est désactivée. Contactez la direction pour la réactiver, puis réessayez l’inscription.',
         );
 
     $this->assertDatabaseMissing('inscriptions', ['eleve_id' => $student->id]);

@@ -11,10 +11,13 @@ use App\Models\Classe;
 use App\Models\Eleve;
 use App\Models\Inscription;
 use App\Models\ModeleBulletin;
+use App\Services\Templates\CloneSystemTemplateService;
 use Illuminate\Support\Facades\DB;
 
 final class EnrollmentService
 {
+    public function __construct(private CloneSystemTemplateService $cloneSystemTemplateService) {}
+
     public function enroll(
         Classe $classe,
         EnrollmentData $data,
@@ -84,13 +87,21 @@ final class EnrollmentService
                 ->where('tenant_id', $lockedClass->tenant_id)
                 ->where('classe_id', $lockedClass->getKey())
                 ->where('annee_scolaire_id', $schoolYear->getKey())
-                ->where('actif', true)
                 ->lockForUpdate()
                 ->first();
 
-            if (! $reportCardModel) {
+            if ($reportCardModel === null) {
+                if (! $lockedClass->systemTemplate()->where('actif', true)->exists()) {
+                    throw new EnrollmentConflictException(
+                        'Le modèle global de bulletin de cette classe est indisponible ou désactivé. Contactez la direction pour rétablir sa configuration, puis réessayez l’inscription.',
+                    );
+                }
+                $reportCardModel = $this->cloneSystemTemplateService->cloneForClasse($lockedClass);
+            }
+
+            if (! $reportCardModel->actif) {
                 throw new EnrollmentConflictException(
-                    'No active report card configuration is available for this class.',
+                    'La configuration du bulletin de cette classe est désactivée. Contactez la direction pour la réactiver, puis réessayez l’inscription.',
                 );
             }
 
