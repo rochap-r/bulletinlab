@@ -6,12 +6,16 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use LogicException;
 use RuntimeException;
 
 class BulletinLabTestDataSeeder extends Seeder
 {
     public function run(): void
     {
+        $adminPassword = $this->configuredPassword('demo_admin_password', 'DEMO_ADMIN_PASSWORD');
+        $teacherPassword = $this->configuredPassword('demo_teacher_password', 'DEMO_TEACHER_PASSWORD');
+
         $tenantId = DB::table('tenants')->updateOrInsert(
             ['slug' => 'ecole-test'],
             [
@@ -69,7 +73,7 @@ class BulletinLabTestDataSeeder extends Seeder
                 'postnom' => 'Test',
                 'prenom' => 'User',
                 'email' => 'admin@test.com',
-                'mot_de_passe' => Hash::make('password123'),
+                'mot_de_passe' => Hash::make($adminPassword),
                 'actif' => true,
                 'public_id' => (string) Str::ulid(),
                 'updated_at' => now(),
@@ -247,7 +251,7 @@ class BulletinLabTestDataSeeder extends Seeder
                 'postnom' => 'Test',
                 'prenom' => 'Enseignant',
                 'email' => 'prof@test.com',
-                'mot_de_passe' => Hash::make('password123'),
+                'mot_de_passe' => Hash::make($teacherPassword),
                 'actif' => true,
                 'public_id' => (string) Str::ulid(),
                 'updated_at' => now(),
@@ -265,5 +269,20 @@ class BulletinLabTestDataSeeder extends Seeder
             ['utilisateur_id' => $enseignantId, 'role_id' => $enseignantRoleId],
             []
         );
+    }
+
+    private function configuredPassword(string $configKey, string $environmentVariable): string
+    {
+        $password = (string) config("seeding.{$configKey}");
+
+        if (trim($password) === '') {
+            throw new LogicException("{$environmentVariable} doit être renseigné avant le seeding.");
+        }
+
+        if (app()->isProduction() && strlen($password) < 12) {
+            throw new LogicException("{$environmentVariable} doit contenir au moins 12 caractères en production.");
+        }
+
+        return $password;
     }
 }
