@@ -273,6 +273,8 @@ final class ListMyCourseAssignmentsService
             'attributions_cours.date_debut',
             'attributions_cours.date_fin',
             'attributions_cours.actif',
+            'annees_scolaires.id as calendar_school_year_id',
+            'annees_scolaires.calendrier_scolaire_id as calendar_id',
         ];
     }
 }

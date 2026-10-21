@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\Platform\AnneeScolaireController;
 use App\Http\Controllers\Api\V1\Platform\BlocSpecialController;
+use App\Http\Controllers\Api\V1\Platform\CalendarAlertController;
 use App\Http\Controllers\Api\V1\Platform\CalendrierController;
 use App\Http\Controllers\Api\V1\Platform\ConfigurationBlocController;
 use App\Http\Controllers\Api\V1\Platform\ConfigurationBulletinController;
@@ -129,6 +130,8 @@ Route::post('platform/calendriers', [CalendrierController::class, 'store'])->nam
 Route::get('platform/calendriers/{calendrier}', [CalendrierController::class, 'show'])->whereNumber('calendrier')->name('platform.calendriers.show');
 Route::put('platform/calendriers/{calendrier}', [CalendrierController::class, 'update'])->whereNumber('calendrier')->name('platform.calendriers.update');
 Route::delete('platform/calendriers/{calendrier}', [CalendrierController::class, 'destroy'])->whereNumber('calendrier')->name('platform.calendriers.destroy');
+Route::post('platform/calendriers/{calendrier}/publication', [CalendrierController::class, 'publish'])->whereNumber('calendrier')->name('platform.calendriers.publication.store');
+Route::get('platform/calendriers/{calendrier}/alertes', CalendarAlertController::class)->whereNumber('calendrier')->name('platform.calendriers.alertes.index');
 
 Route::get('platform/configurations-bulletin', [ConfigurationBulletinController::class, 'index'])
     ->name('platform.configurations-bulletin.index');

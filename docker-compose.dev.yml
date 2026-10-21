@@ -1,0 +1,37 @@
+# PostgreSQL de développement — BulletinLab
+#
+# Usage :
+#   docker compose -f docker-compose.dev.yml up -d          # démarrer la base
+#   docker compose -f docker-compose.dev.yml down           # arrêt (données conservées)
+#   docker compose -f docker-compose.dev.yml down -v        # remise à zéro complète
+#
+# L'application (Herd) se connecte au PostgreSQL natif de la machine
+# (127.0.0.1:5432, voir DB_PORT dans .env). Ce conteneur est une base de dev
+# alternative, isolée : son port hôte est DEV_DB_PORT (5433 par défaut) pour ne
+# jamais entrer en conflit avec le service PostgreSQL natif.
+# Pour l'utiliser : DB_HOST=127.0.0.1 DB_PORT=5433 dans .env.
+
+name: bulletinlab-dev
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-bulletinlab}
+      POSTGRES_USER: ${DB_USERNAME:-bulletinlab}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Renseignez DB_PASSWORD dans .env}
+    ports:
+      - "${DEV_DB_PORT:-5433}:5432"
+    volumes:
+      # postgres:18+ : montage sur /var/lib/postgresql (les données vivent dans
+      # un sous-dossier dédié à la version majeure, ex. 18/docker).
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-bulletinlab} -d ${DB_DATABASE:-bulletinlab}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pg_data:

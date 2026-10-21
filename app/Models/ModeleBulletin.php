@@ -4,6 +4,7 @@ namespace App\Models;
 
 use App\Models\Concerns\HasPublicId;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class ModeleBulletin extends Model
@@ -36,6 +37,16 @@ class ModeleBulletin extends Model
         return $this->hasMany(ModeleNode::class)->orderBy('ordre');
     }
 
+    public function systemTemplate(): BelongsTo
+    {
+        return $this->belongsTo(SystemTemplateBulletin::class, 'system_template_id');
+    }
+
+    public function layout(): BelongsTo
+    {
+        return $this->belongsTo(SystemLayoutBulletin::class, 'layout_id');
+    }
+
     public function periodes(): HasMany
     {
         return $this->hasMany(ModelePeriode::class)->orderBy('ordre');
@@ -44,6 +55,11 @@ class ModeleBulletin extends Model
     public function maxima(): HasMany
     {
         return $this->hasMany(ModeleMaximum::class);
+    }
+
+    public function blocs(): HasMany
+    {
+        return $this->hasMany(ModeleBloc::class)->orderBy('ordre');
     }
 
     public function bulletins(): HasMany

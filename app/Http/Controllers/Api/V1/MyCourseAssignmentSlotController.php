@@ -21,6 +21,7 @@ final class MyCourseAssignmentSlotController extends Controller
         $slots = $this->listSlotsService->paginate(
             $assignment,
             $request->integer('per_page', 50),
+            $request->boolean('include_calculated'),
         );
 
         return MyCourseAssignmentSlotResource::collection($slots)->response();

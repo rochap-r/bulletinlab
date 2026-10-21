@@ -20,6 +20,11 @@ final class MyClassStudentController extends Controller
     {
         $class = $request->schoolClass();
         $search = trim((string) $request->input('recherche', ''));
+        $perPage = (int) $request->input('per_page', 25);
+        if (! in_array($perPage, [25, 50, 100], true)) {
+            $perPage = 25;
+        }
+
         $rows = Inscription::query()->where('classe_id', $class->id)->where('annee_scolaire_id', $class->annee_scolaire_id)
             ->whereHas('eleve', function ($query) use ($class, $search): void {
                 $query->where('etablissement_id', $class->etablissement_id);
@@ -28,7 +33,7 @@ final class MyClassStudentController extends Controller
                         ->orWhere('postnom', 'like', "%$search%")->orWhere('prenom', 'like', "%$search%")
                         ->orWhere('num_permanent', 'like', "%$search%"));
                 }
-            })->with('eleve')->latest('id')->paginate(50);
+            })->with('eleve')->latest('id')->paginate($perPage)->withQueryString();
 
         return InscriptionResource::collection($rows)->response();
     }

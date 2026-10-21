@@ -89,7 +89,7 @@ final class MyClassStudentRequest extends FormRequest
             return ['fichier' => ['required', 'file', 'mimes:xlsx', 'extensions:xlsx', 'max:5120']];
         }
         if ($this->isMethod('GET')) {
-            return ['page' => ['sometimes', 'integer', 'min:1'], 'recherche' => ['sometimes', 'nullable', 'string', 'max:100']];
+            return ['page' => ['sometimes', 'integer', 'min:1'], 'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'], 'recherche' => ['sometimes', 'nullable', 'string', 'max:100']];
         }
         if ($this->isMethod('DELETE')) {
             return ['motif' => ['required', 'string', 'min:3', 'max:500']];

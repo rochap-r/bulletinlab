@@ -11,12 +11,29 @@ use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Support\Str;
 use LogicException;
 
 #[FailOnUnknownFields]
 final class MyCourseAssignmentSlotIndexRequest extends FormRequest
 {
     private ?AttributionCours $resolvedAssignment = null;
+
+    protected function prepareForValidation(): void
+    {
+        $includeCalculated = $this->query->get('include_calculated');
+
+        if (is_string($includeCalculated)) {
+            $normalized = Str::lower($includeCalculated);
+
+            if (in_array($normalized, ['true', 'false'], true)) {
+                $this->query->set(
+                    'include_calculated',
+                    $normalized === 'true' ? '1' : '0',
+                );
+            }
+        }
+    }
 
     public function authorize(
         Gate $gate,
@@ -73,6 +90,7 @@ final class MyCourseAssignmentSlotIndexRequest extends FormRequest
         $rules = [
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'page' => ['sometimes', 'integer', 'min:1'],
+            'include_calculated' => ['sometimes', 'boolean'],
         ];
 
         foreach (array_diff(array_keys($this->query()), array_keys($rules)) as $unknownField) {

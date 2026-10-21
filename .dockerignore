@@ -1,0 +1,44 @@
+# VCS & tooling
+.git
+.github
+.ai
+.agents
+.impeccable
+.idea
+.vscode
+.phpunit.cache
+.phpunit.result.cache
+.phpstan.cache
+coverage
+
+# Dépendances & artefacts de build (reconstruits dans les images)
+node_modules
+vendor
+public/build
+frontend/node_modules
+frontend/dist
+frontend/.git
+
+# Données runtime (recréées par l'entrypoint, volumes ailleurs)
+storage/logs
+storage/framework/cache
+storage/framework/sessions
+storage/framework/views
+storage/pail
+tmp
+*.log
+*.sqlite
+*.sqlite-*
+
+# Secrets & env locaux
+.env
+.env.*
+!.env.example
+
+# Tests & documents non nécessaires aux images
+tests
+phpunit.xml
+COMMERCIAL
+*.md
+openapi-v1.json
+NUL

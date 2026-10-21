@@ -14,12 +14,39 @@ function calendarManagementPayload(): array
         'code' => 'CAL_TEST', 'libelle' => 'Calendrier test', 'pays' => 'RDC',
         'date_debut' => '2026-09-01', 'date_fin' => '2027-07-31',
         'officiel' => true, 'actif' => true,
+        'profils_cycles' => [[
+            'cycle_scolaire' => 'PRIMAIRE', 'mode_decoupage' => 'TRIMESTRIEL',
+            'jours_ouvrables_attendus' => 222, 'heures_minimales' => 900,
+            'jours_classe' => ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI', 'SAMEDI'],
+        ]],
         'periodes' => [[
             'code' => 'P1', 'nom' => 'Première période', 'type_periode' => 'PERIODE',
+            'cycle_scolaire' => 'PRIMAIRE',
             'date_debut' => '2026-09-01', 'date_fin' => '2026-10-31',
             'ordre' => 1, 'saisie_notes_ouverte' => false, 'periode_active' => false,
         ]],
+        'evenements' => [[
+            'code' => 'ENAFEP', 'nom' => 'ENAFEP', 'type_evenement' => 'EXAMEN_NATIONAL',
+            'cycle_scolaire' => 'PRIMAIRE', 'date_debut' => '2027-06-08', 'date_fin' => '2027-06-09',
+            'audiences' => ['TOUS'], 'niveau_alerte' => 'CRITIQUE', 'delai_alerte_jours' => 30,
+            'description' => null,
+        ]],
     ];
+}
+
+function publishableCalendarPayload(string $code = 'CAL_NATIONAL'): array
+{
+    $payload = calendarManagementPayload();
+    $payload['code'] = $code;
+    $payload['profils_cycles'] = [
+        ...$payload['profils_cycles'],
+        [...$payload['profils_cycles'][0], 'cycle_scolaire' => 'MATERNELLE'],
+        [...$payload['profils_cycles'][0], 'cycle_scolaire' => 'SECONDAIRE_TECHNIQUE'],
+    ];
+    $payload['periodes'][0]['cycle_scolaire'] = 'TOUS';
+    $payload['evenements'][0]['cycle_scolaire'] = 'TOUS';
+
+    return $payload;
 }
 
 beforeEach(function () {
@@ -51,6 +78,8 @@ test('used calendars protect dates periods and deletion while allowing metadata 
     $created = $this->postJson('/api/v1/platform/calendriers', $payload)->assertCreated();
     $id = $created->json('data.id');
     $payload['periodes'][0]['id'] = $created->json('data.periodes.0.id');
+    $payload['profils_cycles'][0]['id'] = $created->json('data.profils_cycles.0.id');
+    $payload['evenements'][0]['id'] = $created->json('data.evenements.0.id');
     AnneeScolaire::query()->create(['calendrier_scolaire_id' => $id, 'libelle' => '2026-2027', 'date_debut' => $payload['date_debut'], 'date_fin' => $payload['date_fin'], 'active' => false, 'cloturee' => true]);
     $this->getJson('/api/v1/platform/calendriers/'.$id)->assertOk()->assertJsonPath('data.utilise', true)->assertJsonPath('data.annees_count', 1);
     $payload['libelle'] = 'Libellé modifié';
@@ -83,6 +112,17 @@ test('calendar validation rejects two active periods and unknown fields', functi
     $this->postJson('/api/v1/platform/calendriers', [...calendarManagementPayload(), 'tenant_id' => 123])->assertUnprocessable();
 });
 
+test('calendar profiles may share school days but reject a duplicate within one cycle', function () {
+    $payload = publishableCalendarPayload();
+    $this->postJson('/api/v1/platform/calendriers', $payload)->assertCreated();
+
+    $payload['code'] = 'CAL_DUPLICATE_DAY';
+    $payload['profils_cycles'][0]['jours_classe'][] = 'LUNDI';
+    $this->postJson('/api/v1/platform/calendriers', $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('profils_cycles.0.jours_classe');
+});
+
 test('calendar period codes can be swapped without replacing their identifiers', function () {
     $payload = calendarManagementPayload();
     $payload['periodes'][] = [...$payload['periodes'][0], 'code' => 'P2', 'ordre' => 2];
@@ -103,4 +143,58 @@ test('calendar linked through a period mapping cannot be deleted', function () {
     $this->getJson('/api/v1/platform/calendriers/'.$created->json('data.id'))->assertOk()->assertJsonPath('data.annees_count', 0)->assertJsonPath('data.utilise', true);
     $this->deleteJson('/api/v1/platform/calendriers/'.$created->json('data.id'))->assertStatus(409);
     $this->assertDatabaseHas('annee_periode_mappings', ['id' => $mapping->id]);
+});
+
+test('a complete national calendar can be published once as the global school year', function () {
+    $calendar = $this->postJson('/api/v1/platform/calendriers', publishableCalendarPayload())
+        ->assertCreated()
+        ->json('data');
+
+    $this->postJson("/api/v1/platform/calendriers/{$calendar['id']}/publication")
+        ->assertCreated()
+        ->assertJsonPath('data.libelle', '2026-2027')
+        ->assertJsonPath('data.calendrier_scolaire_id', $calendar['id'])
+        ->assertJsonPath('data.active', false)
+        ->assertJsonPath('meta.created', true)
+        ->assertJsonPath('meta.scope', 'GLOBAL');
+
+    $this->postJson("/api/v1/platform/calendriers/{$calendar['id']}/publication")
+        ->assertOk()
+        ->assertJsonPath('meta.created', false);
+
+    $this->getJson('/api/v1/platform/calendriers')
+        ->assertOk()
+        ->assertJsonPath('data.0.annees_scolaires.0.libelle', '2026-2027');
+
+    $this->assertDatabaseCount('annees_scolaires', 1);
+});
+
+test('publication requires a complete program for all three school cycles', function () {
+    $calendar = $this->postJson('/api/v1/platform/calendriers', calendarManagementPayload())
+        ->assertCreated()
+        ->json('data');
+
+    $this->postJson("/api/v1/platform/calendriers/{$calendar['id']}/publication")
+        ->assertConflict()
+        ->assertJsonPath('detail', fn (string $detail): bool => str_contains($detail, 'maternelle')
+            && str_contains($detail, 'secondaire/technique'));
+
+    $this->assertDatabaseCount('annees_scolaires', 0);
+});
+
+test('only one national calendar can be published for a school year', function () {
+    $first = $this->postJson('/api/v1/platform/calendriers', publishableCalendarPayload('CAL_NATIONAL_A'))
+        ->assertCreated()
+        ->json('data');
+    $second = $this->postJson('/api/v1/platform/calendriers', publishableCalendarPayload('CAL_NATIONAL_B'))
+        ->assertCreated()
+        ->json('data');
+
+    $this->postJson("/api/v1/platform/calendriers/{$first['id']}/publication")
+        ->assertCreated();
+    $this->postJson("/api/v1/platform/calendriers/{$second['id']}/publication")
+        ->assertConflict()
+        ->assertJsonPath('detail', 'L’année scolaire 2026-2027 utilise déjà un autre calendrier national.');
+
+    $this->assertDatabaseCount('annees_scolaires', 1);
 });

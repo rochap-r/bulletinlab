@@ -1,13 +1,22 @@
 <?php
 
 use App\Domains\Student\Services\StudentSpreadsheetService;
+use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
+use App\Models\AttributionCours;
 use App\Models\Bulletin;
+use App\Models\CalendrierPeriode;
+use App\Models\CalendrierScolaire;
 use App\Models\Classe;
 use App\Models\Eleve;
 use App\Models\Etablissement;
 use App\Models\Inscription;
 use App\Models\ModeleBulletin;
+use App\Models\ModeleMaximum;
+use App\Models\ModeleNode;
+use App\Models\ModelePeriode;
+use App\Models\Note;
+use App\Models\ResultatBulletin;
 use App\Models\Role;
 use App\Models\SystemTemplateMaximum;
 use App\Models\SystemTemplateNode;
@@ -18,6 +27,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
@@ -57,6 +67,78 @@ beforeEach(function () {
     $this->travelTo('2026-10-17 10:00:00');
 });
 
+test('a titular sees the general and per-course rankings ordered by highest result', function () {
+    $scope = myStudentScope();
+    $model = ModeleBulletin::query()->where('classe_id', $scope['class']->id)->firstOrFail();
+    $period = ModelePeriode::query()->create([
+        'tenant_id' => $scope['class']->tenant_id,
+        'modele_bulletin_id' => $model->id,
+        'code' => 'P1',
+        'nom' => 'Première période',
+        'type_periode' => 'PERIODE',
+        'ordre' => 1,
+        'saisissable' => true,
+        'calculable' => false,
+        'actif' => true,
+    ]);
+    $calendar = CalendrierScolaire::query()->create(['code' => 'TEST-2026', 'libelle' => 'Calendrier test', 'date_debut' => '2026-09-01', 'date_fin' => '2027-07-31', 'actif' => true]);
+    $calendarPeriod = CalendrierPeriode::query()->create(['calendrier_scolaire_id' => $calendar->id, 'code' => 'P1', 'nom' => 'Première période', 'type_periode' => 'PERIODE', 'cycle_scolaire' => 'SECONDAIRE_TECHNIQUE', 'date_debut' => '2026-09-01', 'date_fin' => '2026-11-04', 'ordre' => 1, 'saisie_notes_ouverte' => true, 'periode_active' => true]);
+    $scope['year']->update(['calendrier_scolaire_id' => $calendar->id]);
+    AnneePeriodeMapping::query()->create(['annee_scolaire_id' => $scope['year']->id, 'calendrier_periode_id' => $calendarPeriod->id, 'code_periode_template' => 'P1', 'saisie_ouverte' => true, 'verrouillee' => false]);
+    $french = ModeleNode::query()->create(['tenant_id' => $scope['class']->tenant_id, 'modele_bulletin_id' => $model->id, 'type_node' => 'MATIERE', 'libelle' => 'Français', 'ordre' => 1, 'afficher_ligne' => true, 'obligatoire' => true]);
+    $math = ModeleNode::query()->create(['tenant_id' => $scope['class']->tenant_id, 'modele_bulletin_id' => $model->id, 'type_node' => 'MATIERE', 'libelle' => 'Mathématiques', 'ordre' => 2, 'afficher_ligne' => true, 'obligatoire' => true]);
+    foreach ([$french, $math] as $node) {
+        ModeleMaximum::query()->create(['tenant_id' => $scope['class']->tenant_id, 'modele_bulletin_id' => $model->id, 'node_id' => $node->id, 'periode_id' => $period->id, 'maxima' => 20, 'coefficient' => 1]);
+    }
+
+    $this->withToken($scope['token']);
+    $students = $this->postJson("/api/v1/me/classes/{$scope['class']->id}/eleves", ['eleves' => [['nom' => 'Deuxième'], ['nom' => 'Premier'], ['nom' => 'Incomplet']]])->assertCreated()->json('data');
+    $scores = [[14, 12], [18, 16], [19, null]];
+    foreach ($students as $index => $enrollment) {
+        $bulletin = Bulletin::query()->where('inscription_id', $enrollment['id'])->firstOrFail();
+        foreach ([$french, $math] as $courseIndex => $node) {
+            if ($scores[$index][$courseIndex] === null) {
+                continue;
+            }
+            Note::query()->create(['tenant_id' => $scope['class']->tenant_id, 'bulletin_id' => $bulletin->id, 'node_id' => $node->id, 'periode_id' => $period->id, 'statut_resultat' => 'SAISIE', 'valeur' => $scores[$index][$courseIndex], 'saisie_par' => $scope['teacher']->id]);
+        }
+    }
+
+    $response = $this->getJson("/api/v1/me/classes/{$scope['class']->id}/classements?periode_id={$period->id}")
+        ->assertOk()
+        ->assertJsonPath('data.classement_general.0.eleve.nom_complet', 'Premier')
+        ->assertJsonPath('data.classement_general.0.rang', 1)
+        ->assertJsonPath('data.classement_general.1.eleve.nom_complet', 'Deuxième')
+        ->assertJsonPath('data.classement_general.2.eleve.nom_complet', 'Incomplet')
+        ->assertJsonPath('data.classement_general.2.rang', null)
+        ->assertJsonPath('data.nombre_eleves', 3)
+        ->assertJsonPath('data.classement_general.0.pourcentage', 85);
+
+    $this->getJson("/api/v1/me/classes/{$scope['class']->id}/classements")
+        ->assertOk()
+        ->assertJsonPath('data.periode.code', 'P1')
+        ->assertJsonPath('data.selection_automatique', true);
+
+    $semester = ModelePeriode::query()->create(['tenant_id' => $scope['class']->tenant_id, 'modele_bulletin_id' => $model->id, 'code' => 'TOTAL_S1', 'nom' => 'Premier semestre', 'type_periode' => 'SEMESTRE', 'ordre' => 2, 'saisissable' => false, 'calculable' => true, 'actif' => true]);
+    foreach (array_slice($students, 0, 2) as $index => $enrollment) {
+        $bulletin = Bulletin::query()->where('inscription_id', $enrollment['id'])->firstOrFail();
+        ResultatBulletin::query()->create(['tenant_id' => $scope['class']->tenant_id, 'bulletin_id' => $bulletin->id, 'periode_id' => $semester->id, 'modele_bulletin_id' => $model->id, 'version' => 1, 'engine_version' => 'test', 'configuration_hash' => str_repeat('a', 64), 'input_hash' => str_repeat('b', 64), 'result_hash' => str_repeat('c', 64), 'total_obtenu' => $index === 0 ? 120 : 150, 'total_maxima' => 200, 'pourcentage' => $index === 0 ? 60 : 75, 'payload' => []]);
+    }
+    $this->getJson("/api/v1/me/classes/{$scope['class']->id}/classements?periode_id={$semester->id}")
+        ->assertOk()
+        ->assertJsonPath('data.periode.nom', 'Premier semestre')
+        ->assertJsonPath('data.classement_general.0.eleve.nom_complet', 'Premier')
+        ->assertJsonPath('data.classement_general.0.pourcentage', 75);
+
+    AttributionCours::query()->create(['tenant_id' => $scope['class']->tenant_id, 'classe_id' => $scope['class']->id, 'modele_bulletin_id' => $model->id, 'node_id' => $french->id, 'enseignant_id' => $scope['teacher']->id, 'actif' => true]);
+    $assignment = AttributionCours::query()->firstOrFail();
+    $this->getJson("/api/v1/me/attributions/{$assignment->id}/classements?periode_id={$period->id}")
+        ->assertOk()
+        ->assertJsonPath('data.attribution.cours', 'Français')
+        ->assertJsonPath('data.classement.0.eleve.nom_complet', 'Incomplet')
+        ->assertJsonPath('data.classement.0.rang', 1);
+});
+
 test('a titular creates an enrolled student and report card then reads edits and withdraws without deleting history', function () {
     $scope = myStudentScope();
     $url = "/api/v1/me/classes/{$scope['class']->id}/eleves";
@@ -70,6 +152,47 @@ test('a titular creates an enrolled student and report card then reads edits and
     $this->deleteJson("$url/$id", ['motif' => 'Départ de la classe'])->assertOk()->assertJsonPath('data.statut', 'ABANDON');
     expect(Eleve::query()->count())->toBe(1)->and(Bulletin::query()->count())->toBe(1);
     $this->putJson("$url/$id", ['nom' => 'Autre'])->assertConflict();
+});
+
+test('the student list honours the requested page size and falls back to 25 for unsupported values', function () {
+    $scope = myStudentScope();
+    $url = "/api/v1/me/classes/{$scope['class']->id}/eleves";
+    $this->withToken($scope['token']);
+    $this->postJson($url, ['eleves' => array_map(fn (int $index) => ['nom' => "Eleve{$index}"], range(1, 60))])->assertCreated();
+
+    $this->getJson($url)
+        ->assertOk()
+        ->assertJsonPath('meta.per_page', 25)
+        ->assertJsonPath('meta.total', 60)
+        ->assertJsonPath('meta.last_page', 3)
+        ->assertJsonCount(25, 'data');
+
+    $this->getJson("$url?per_page=50")
+        ->assertOk()
+        ->assertJsonPath('meta.per_page', 50)
+        ->assertJsonPath('meta.last_page', 2)
+        ->assertJsonCount(50, 'data');
+
+    $this->getJson("$url?per_page=100")
+        ->assertOk()
+        ->assertJsonPath('meta.per_page', 100)
+        ->assertJsonPath('meta.last_page', 1)
+        ->assertJsonCount(60, 'data');
+
+    $this->getJson("$url?per_page=30")
+        ->assertOk()
+        ->assertJsonPath('meta.per_page', 25)
+        ->assertJsonCount(25, 'data');
+
+    $this->getJson("$url?per_page=500")->assertUnprocessable();
+
+    $this->getJson("$url?page=2")
+        ->assertOk()
+        ->assertJsonPath('meta.current_page', 2)
+        ->assertJsonCount(25, 'data');
+
+    $links = $this->getJson("$url?per_page=50")->assertOk()->json('meta.links');
+    expect(collect($links)->pluck('url')->filter()->every(fn (string $link) => str_contains($link, 'per_page=50')))->toBeTrue();
 });
 
 test('student operations require the actual titular and a teaching role for every endpoint', function (string $defect) {
@@ -141,9 +264,34 @@ test('Excel template preview is read only and confirmation enrolls all students'
     expect(Eleve::query()->count())->toBe(2);
 });
 
+test('the template ships two example pupils that the preview ignores until they are replaced', function () {
+    $scope = myStudentScope();
+    $url = "/api/v1/me/classes/{$scope['class']->id}/eleves";
+    $book = app(StudentSpreadsheetService::class)->template($scope['class']);
+    expect($book->getSheet(0)->getCell('A2')->getValue())->toStartWith('EXEMPLE')
+        ->and($book->getSheet(0)->getCell('A3')->getValue())->toStartWith('EXEMPLE')
+        ->and($book->getSheet(0)->getCell('E2')->getValue())->toBe('2012-04-17')
+        ->and($book->getSheet(0)->getCell('G2')->getValue())->toBeNull();
+    $this->withToken($scope['token']);
+    $this->post("$url/excel/apercu", ['fichier' => myStudentWorkbook($book)], ['Accept' => 'application/json'])
+        ->assertOk()->assertJsonCount(0, 'data.lignes')->assertJsonCount(1, 'data.erreurs')
+        ->assertJsonPath('data.erreurs.0.message', 'Seules les lignes d’exemple sont présentes : remplacez-les par vos élèves, puis vérifiez à nouveau.');
+    $book = app(StudentSpreadsheetService::class)->template($scope['class']);
+    $book->getSheet(0)->fromArray(['Vraie', 'Learner', 'Trésor', 'M', '2012-05-06'], null, 'A4');
+    $this->post("$url/excel/apercu", ['fichier' => myStudentWorkbook($book)], ['Accept' => 'application/json'])
+        ->assertOk()->assertJsonCount(1, 'data.lignes')->assertJsonCount(0, 'data.erreurs')
+        ->assertJsonPath('data.lignes.0.ligne', 4);
+    expect(Eleve::query()->count())->toBe(0);
+});
+
 test('Excel reports invalid rows formulas and duplicates without writing', function () {
     $scope = myStudentScope();
     $book = app(StudentSpreadsheetService::class)->template($scope['class']);
+    foreach ([2, 3] as $line) {
+        foreach (range('A', 'K') as $column) {
+            $book->getSheet(0)->setCellValueExplicit("$column$line", null, DataType::TYPE_NULL);
+        }
+    }
     $book->getSheet(0)->fromArray(['Mbuyi', null, null, 'X'], null, 'A2');
     $book->getSheet(0)->fromArray(['Mbuyi'], null, 'A3');
     $book->getSheet(0)->fromArray(['=1+1'], null, 'A4');
@@ -286,6 +434,34 @@ test('closed school year blocks editing withdrawing and previewing existing stud
     $book = app(StudentSpreadsheetService::class)->template($scope['class']);
     $this->post("$url/excel/apercu", ['fichier' => myStudentWorkbook($book)], ['Accept' => 'application/json'])->assertConflict();
     expect(Inscription::query()->findOrFail($id)->statut)->toBe('ACTIF')->and(Eleve::query()->firstOrFail()->nom)->toBe('Mbuyi');
+});
+
+test('a titular import binds every student to the class they hold and refuses a class they only teach', function () {
+    $scope = myStudentScope();
+    $titulaireClass = $scope['class'];
+    $teachingClass = $titulaireClass->replicate(['public_id']);
+    $teachingClass->nom = '4ème B';
+    $teachingClass->titulaire_id = null;
+    $teachingClass->save();
+    $teachingUrl = "/api/v1/me/classes/{$teachingClass->id}/eleves";
+    $titulaireUrl = "/api/v1/me/classes/{$titulaireClass->id}/eleves";
+    $this->withToken($scope['token']);
+
+    $this->postJson($teachingUrl, ['eleves' => [['nom' => 'Élève interdit']]])->assertForbidden();
+    $this->getJson($teachingUrl)->assertForbidden();
+    $this->getJson("$teachingUrl/excel/modele")->assertForbidden();
+    $book = app(StudentSpreadsheetService::class)->template($teachingClass);
+    $book->getSheet(0)->setCellValue('A2', 'Élève interdit');
+    $this->post("$teachingUrl/excel/apercu", ['fichier' => myStudentWorkbook($book)], ['Accept' => 'application/json'])->assertForbidden();
+    expect(Eleve::query()->count())->toBe(0)->and(Inscription::query()->count())->toBe(0);
+
+    $this->postJson($titulaireUrl, ['eleves' => [['nom' => 'Mbuyi'], ['nom' => 'Kalala']]])
+        ->assertCreated()->assertJsonCount(2, 'data')
+        ->assertJsonPath('data.0.classe_id', $titulaireClass->id)
+        ->assertJsonPath('data.1.classe_id', $titulaireClass->id);
+
+    expect(Inscription::query()->pluck('classe_id')->unique()->all())->toBe([$titulaireClass->id])
+        ->and(Inscription::query()->where('classe_id', $titulaireClass->id)->count())->toBe(2);
 });
 
 test('an existing school student is never overwritten or re-enrolled by an import', function () {

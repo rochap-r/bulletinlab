@@ -4,7 +4,6 @@ namespace App\Http\Requests\Api\V1\Platform;
 
 use App\Models\CalendrierScolaire;
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Database\Query\Builder;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -24,7 +23,6 @@ final class PlatformAnneeScolaireRequest extends FormRequest
     public function rules(): array
     {
         $annee = $this->route('annee');
-        $calendarId = $this->input('calendrier_scolaire_id');
 
         return [
             'calendrier_scolaire_id' => ['required', 'integer', Rule::exists('calendriers_scolaires', 'id')],
@@ -34,7 +32,6 @@ final class PlatformAnneeScolaireRequest extends FormRequest
                 'max:20',
                 'regex:/^\d{4}-\d{4}$/',
                 Rule::unique('annees_scolaires')
-                    ->where(fn (Builder $query): Builder => $query->where('calendrier_scolaire_id', $calendarId))
                     ->ignore($annee),
             ],
             'date_debut' => ['required', 'date'],

@@ -24,6 +24,17 @@ final class StudentSpreadsheetService
         'num_permanent' => 'Numéro permanent', 'nom_pere' => 'Nom du père', 'nom_mere' => 'Nom de la mère',
         'telephone_parent' => 'Téléphone du parent', 'adresse' => 'Adresse'];
 
+    /**
+     * Deux élèves d’exemple livrés dans le modèle : ils montrent le format attendu
+     * et sont ignorés à l’import tant que la colonne Nom commence par « EXEMPLE ».
+     *
+     * @var list<list<string|null>>
+     */
+    private const EXAMPLE_ROWS = [
+        ['EXEMPLE (à remplacer)', 'Nsimba', 'Josué', 'M', '2012-04-17', 'Lubumbashi', null, 'Nsimba Patrick', 'Kalala Grâce', '+243810000001', '12, avenue de la Paix, Lubumbashi'],
+        ['EXEMPLE (à remplacer)', 'Mabiala', 'Esther', 'F', '2013-01-09', 'Kinshasa', null, 'Mabiala Alain', 'Lukusa Sarah', '+243820000002', '45, rue du Marché, Kinshasa'],
+    ];
+
     public function __construct(private ManageMyClassStudentsService $students) {}
 
     public function template(Classe $class): Spreadsheet
@@ -37,6 +48,13 @@ final class StudentSpreadsheetService
             $sheet->getColumnDimension($column)->setWidth($column === 'E' ? 36 : 24);
         }
         $sheet->getStyle('A2:K201')->getNumberFormat()->setFormatCode('@');
+        foreach (self::EXAMPLE_ROWS as $offset => $example) {
+            foreach (array_values($example) as $index => $value) {
+                if ($value !== null) {
+                    $sheet->setCellValueExplicit(Coordinate::stringFromColumnIndex($index + 1).(2 + $offset), $value, DataType::TYPE_STRING);
+                }
+            }
+        }
         $context = $book->createSheet()->setTitle('Classe');
         foreach ([$class->public_id, (string) $class->annee_scolaire_id, $class->nom] as $index => $value) {
             $context->setCellValueExplicit('A'.($index + 1), $value, DataType::TYPE_STRING);
@@ -118,16 +136,22 @@ final class StudentSpreadsheetService
                 if ((int) $rowNumber > 1) {
                     $studentRows[(int) $rowNumber] = true;
                 }
-                if (count($studentRows) > 200) {
-                    throw ValidationException::withMessages(['fichier' => 'Le fichier contient plus de 200 lignes d’élèves renseignées. Répartissez les élèves dans plusieurs fichiers.']);
-                }
             }
             ksort($studentRows);
             $lines = $errors = $seen = $numbers = [];
+            $examples = $filledRows = 0;
             foreach (array_keys($studentRows) as $line) {
                 $values = $sheet->rangeToArray("A$line:K$line", null, false, false)[0];
                 if (collect($values)->every(fn ($value): bool => $value === null || trim((string) $value) === '')) {
                     continue;
+                }
+                if (Str::startsWith(Str::lower(trim((string) ($values[0] ?? ''))), 'exemple')) {
+                    $examples++;
+
+                    continue;
+                }
+                if (++$filledRows > 200) {
+                    throw ValidationException::withMessages(['fichier' => 'Le fichier contient plus de 200 lignes d’élèves renseignées. Répartissez les élèves dans plusieurs fichiers.']);
                 }
                 $row = [];
                 $formula = false;
@@ -158,7 +182,9 @@ final class StudentSpreadsheetService
                 }
             }
             if ($lines === [] && $errors === []) {
-                $errors[] = ['ligne' => 2, 'message' => 'Le fichier ne contient aucun élève. Remplissez au moins une ligne.'];
+                $errors[] = ['ligne' => 2, 'message' => $examples > 0
+                    ? 'Seules les lignes d’exemple sont présentes : remplacez-les par vos élèves, puis vérifiez à nouveau.'
+                    : 'Le fichier ne contient aucun élève. Remplissez au moins une ligne.'];
             }
 
             return ['lignes' => $lines, 'erreurs' => $errors];

@@ -37,6 +37,11 @@ class ModeleNode extends Model
         return $this->belongsTo(ModeleBulletin::class);
     }
 
+    public function matiere(): BelongsTo
+    {
+        return $this->belongsTo(RefMatiere::class, 'matiere_id');
+    }
+
     public function maxima(): HasMany
     {
         return $this->hasMany(ModeleMaximum::class, 'node_id');

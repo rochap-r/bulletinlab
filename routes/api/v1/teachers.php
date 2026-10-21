@@ -1,10 +1,15 @@
 <?php
 
+use App\Http\Controllers\Api\V1\ImportMyCourseAssignmentGradeMatrixController;
 use App\Http\Controllers\Api\V1\ImportMyCourseAssignmentNotesController;
+use App\Http\Controllers\Api\V1\MyClassBulletinController;
 use App\Http\Controllers\Api\V1\MyClassController;
+use App\Http\Controllers\Api\V1\MyClassProgressController;
+use App\Http\Controllers\Api\V1\MyClassRankingController;
 use App\Http\Controllers\Api\V1\MyClassStudentController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentGradeSheetController;
+use App\Http\Controllers\Api\V1\MyCourseAssignmentRankingController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentSlotController;
 use App\Http\Controllers\Api\V1\UpsertMyCourseAssignmentNoteController;
 use Illuminate\Support\Facades\Route;
@@ -15,9 +20,18 @@ Route::prefix('me/classes/{classe}/eleves')->name('me.classes.eleves.')->whereNu
     Route::get('/', [MyClassStudentController::class, 'index'])->name('index');
     Route::post('/', [MyClassStudentController::class, 'store'])->name('store');
     Route::get('{inscription}', [MyClassStudentController::class, 'show'])->whereNumber('inscription')->name('show');
+    Route::get('{inscription}/bulletin', [MyClassBulletinController::class, 'show'])->whereNumber('inscription')->name('bulletin.show');
     Route::put('{inscription}', [MyClassStudentController::class, 'update'])->whereNumber('inscription')->name('update');
     Route::delete('{inscription}', [MyClassStudentController::class, 'destroy'])->whereNumber('inscription')->name('destroy');
 });
+
+Route::get('me/classes/{classe}/progression-notes', MyClassProgressController::class)
+    ->whereNumber('classe')
+    ->name('me.classes.progression-notes.show');
+
+Route::get('me/classes/{classe}/classements', MyClassRankingController::class)
+    ->whereNumber('classe')
+    ->name('me.classes.classements.show');
 
 Route::get('me/classes', MyClassController::class)
     ->name('me.classes.index');
@@ -27,6 +41,13 @@ Route::get(
     'me/attributions/{attribution}/creneaux',
     MyCourseAssignmentSlotController::class,
 )->name('me.attributions.creneaux.index');
+Route::get('me/attributions/{attribution}/classements', MyCourseAssignmentRankingController::class)
+    ->whereNumber('attribution')
+    ->name('me.attributions.classements.show');
+Route::post(
+    'me/attributions/{attribution}/imports-notes-matrice',
+    ImportMyCourseAssignmentGradeMatrixController::class,
+)->name('me.attributions.imports-notes-matrice.store');
 Route::get(
     'me/attributions/{attribution}/creneaux/{creneau}/feuille-notes',
     MyCourseAssignmentGradeSheetController::class,

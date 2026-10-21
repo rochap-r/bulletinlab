@@ -3,24 +3,30 @@
 namespace App\Domains\Teacher\Services;
 
 use App\Domains\Teacher\Exceptions\TeacherAssignmentSlotListingConflictException;
+use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
+use App\Models\CalendrierPeriode;
+use App\Models\ModeleBulletin;
 use App\Models\ModeleMaximum;
 use App\Models\VerrouillagePeriode;
+use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 final class ListMyCourseAssignmentSlotsService
 {
     public function paginate(
         AttributionCours $assignment,
         int $perPage,
+        bool $includeCalculated = false,
     ): LengthAwarePaginator {
         $this->assertConsistentSlots($assignment);
 
-        $slots = $this->eligibleSlotsQuery($assignment)
+        $slots = $this->slotsQuery($assignment, $includeCalculated)
             ->orderBy('modele_periodes.ordre')
             ->orderBy('modele_periodes.id')
             ->orderBy('modele_maxima.id')
@@ -47,10 +53,38 @@ final class ListMyCourseAssignmentSlotsService
     }
 
     /**
+     * @return Collection<int, ModeleMaximum>
+     */
+    public function matrixColumns(AttributionCours $assignment): Collection
+    {
+        $this->assertConsistentSlots($assignment);
+
+        $columns = $this->slotsQuery($assignment, true)
+            ->orderBy('modele_periodes.ordre')
+            ->orderBy('modele_periodes.id')
+            ->orderBy('modele_maxima.id')
+            ->get();
+
+        $this->attachAssignmentId($columns, $assignment);
+
+        return $columns;
+    }
+
+    /**
      * @return Builder<ModeleMaximum>
      */
     private function eligibleSlotsQuery(
         AttributionCours $assignment,
+    ): Builder {
+        return $this->slotsQuery($assignment, false);
+    }
+
+    /**
+     * @return Builder<ModeleMaximum>
+     */
+    private function slotsQuery(
+        AttributionCours $assignment,
+        bool $includeCalculated,
     ): Builder {
         $lockedPeriod = VerrouillagePeriode::query()
             ->selectRaw('1')
@@ -69,7 +103,7 @@ final class ListMyCourseAssignmentSlotsService
             ->where('verrouillages_periodes.verrouille', true)
             ->limit(1);
 
-        return ModeleMaximum::query()
+        $query = ModeleMaximum::query()
             ->select([
                 'modele_maxima.id',
                 'modele_maxima.tenant_id',
@@ -106,7 +140,6 @@ final class ListMyCourseAssignmentSlotsService
             ->where('modele_maxima.node_id', $assignment->node_id)
             ->where('modele_maxima.maxima', '>', 0)
             ->where('modele_periodes.actif', true)
-            ->where('modele_periodes.saisissable', true)
             ->with([
                 'periode' => fn (BelongsTo $query): BelongsTo => $query
                     ->select([
@@ -118,9 +151,93 @@ final class ListMyCourseAssignmentSlotsService
                         'type_periode',
                         'ordre',
                         'saisissable',
+                        'calculable',
                         'actif',
                     ]),
             ]);
+
+        if (! $includeCalculated) {
+            $query->where('modele_periodes.saisissable', true);
+        }
+
+        $this->applyCalendarOpenness($query, $assignment);
+
+        return $query;
+    }
+
+    /**
+     * Exposes whether the period is currently inside its school calendar
+     * window. Years without a calendar or template periods without a mapping
+     * stay open so schools outside calendar governance are unaffected.
+     */
+    private function applyCalendarOpenness(
+        Builder $query,
+        AttributionCours $assignment,
+    ): void {
+        $schoolYearId = $assignment->offsetExists('calendar_school_year_id')
+            ? $assignment->getAttribute('calendar_school_year_id')
+            : null;
+        $calendarId = $assignment->offsetExists('calendar_id')
+            ? $assignment->getAttribute('calendar_id')
+            : null;
+
+        if ($schoolYearId === null && ! $assignment->offsetExists('calendar_school_year_id')) {
+            $schoolYearId = ModeleBulletin::query()
+                ->whereKey($assignment->modele_bulletin_id)
+                ->where('tenant_id', $assignment->tenant_id)
+                ->value('annee_scolaire_id');
+            $calendarId = $schoolYearId === null
+                ? null
+                : AnneeScolaire::withoutGlobalScopes()
+                    ->whereKey($schoolYearId)
+                    ->value('calendrier_scolaire_id');
+        }
+
+        if ($schoolYearId === null || $calendarId === null) {
+            $query->addSelect([
+                DB::raw('1 as "periode_ouverte"'),
+            ]);
+
+            return;
+        }
+
+        $today = CarbonImmutable::today(
+            (string) config('app.business_timezone'),
+        )->toDateString();
+
+        $closedCalendarPeriod = CalendrierPeriode::query()
+            ->selectRaw('1')
+            ->join(
+                'annee_periode_mappings',
+                fn (JoinClause $join): JoinClause => $join
+                    ->on(
+                        'annee_periode_mappings.calendrier_periode_id',
+                        '=',
+                        'calendrier_periodes.id',
+                    ),
+            )
+            ->whereColumn(
+                'annee_periode_mappings.code_periode_template',
+                'modele_periodes.code',
+            )
+            ->where('annee_periode_mappings.annee_scolaire_id', $schoolYearId)
+            ->where(
+                'calendrier_periodes.calendrier_scolaire_id',
+                $calendarId,
+            )
+            ->where(function (Builder $periodQuery) use ($today): void {
+                $periodQuery
+                    ->where('calendrier_periodes.date_debut', '>', $today)
+                    ->orWhere('calendrier_periodes.date_fin', '<', $today);
+            })
+            ->limit(1);
+
+        $query->addSelect([
+            DB::raw(
+                '(CASE WHEN EXISTS ('.$closedCalendarPeriod->toSql().') THEN 0 ELSE 1 END) as "periode_ouverte"',
+            ),
+        ]);
+        $query->addBinding($closedCalendarPeriod->getBindings(), 'select');
     }
 
     /**

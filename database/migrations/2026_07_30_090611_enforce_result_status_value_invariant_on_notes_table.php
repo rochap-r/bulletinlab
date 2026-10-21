@@ -17,7 +17,7 @@ return new class extends Migration
     public function up(): void
     {
         if (DB::table('notes')
-            ->whereRaw('('.$this->validResultExpression().') = 0')
+            ->whereRaw('('.$this->validResultExpression().') = '.$this->falseLiteral())
             ->exists()) {
             throw new RuntimeException(
                 'Existing notes must have a coherent result status and value before adding the database constraint.',
@@ -26,9 +26,10 @@ return new class extends Migration
 
         match (DB::connection()->getDriverName()) {
             'mysql' => $this->addMySqlConstraint(),
+            'pgsql' => $this->addPostgresConstraint(),
             'sqlite' => $this->addSqliteTriggers(),
             default => throw new RuntimeException(
-                'Result status constraints are only supported on MySQL and SQLite.',
+                'Result status constraints are only supported on MySQL, PostgreSQL and SQLite.',
             ),
         };
     }
@@ -45,9 +46,15 @@ return new class extends Migration
                     self::CONSTRAINT,
                 ),
             ),
+            'pgsql' => DB::statement(
+                sprintf(
+                    'ALTER TABLE "notes" DROP CONSTRAINT "%s"',
+                    self::CONSTRAINT,
+                ),
+            ),
             'sqlite' => $this->dropSqliteTriggers(),
             default => throw new RuntimeException(
-                'Result status constraints are only supported on MySQL and SQLite.',
+                'Result status constraints are only supported on MySQL, PostgreSQL and SQLite.',
             ),
         };
     }
@@ -57,6 +64,17 @@ return new class extends Migration
         DB::statement(
             sprintf(
                 'ALTER TABLE `notes` ADD CONSTRAINT `%s` CHECK (%s)',
+                self::CONSTRAINT,
+                $this->validResultExpression(),
+            ),
+        );
+    }
+
+    private function addPostgresConstraint(): void
+    {
+        DB::statement(
+            sprintf(
+                'ALTER TABLE "notes" ADD CONSTRAINT "%s" CHECK (%s)',
                 self::CONSTRAINT,
                 $this->validResultExpression(),
             ),
@@ -117,5 +135,14 @@ SQL,
             ." AND {$value} >= 0)"
             ." OR ({$status} IN ('ABSENTE', 'DISPENSEE', 'ANNULEE')"
             ." AND {$value} IS NULL))";
+    }
+
+    /**
+     * Littéral « faux » du moteur courant : false (booléen natif) sur
+     * PostgreSQL, 0 sur MySQL et SQLite.
+     */
+    private function falseLiteral(): string
+    {
+        return DB::connection()->getDriverName() === 'pgsql' ? 'false' : '0';
     }
 };

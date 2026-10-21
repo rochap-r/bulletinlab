@@ -22,9 +22,12 @@ use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Domains\Tenant\Contexts\TenantContext;
 use App\Http\Middleware\EstablishmentMiddleware;
 use App\Http\Middleware\TenantMiddleware;
+use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
 use App\Models\Bulletin;
+use App\Models\CalendrierPeriode;
+use App\Models\CalendrierScolaire;
 use App\Models\Classe;
 use App\Models\Eleve;
 use App\Models\Etablissement;
@@ -197,7 +200,9 @@ test('the course assignment spreadsheet round trips real courses and previews wi
         ->and($sheet->getColumnDimension('C')->getVisible())->toBeFalse()
         ->and($sheet->getCell('B2')->getDataValidation()->getFormula1())->toBe('ListeEnseignants')
         ->and($book->getSheet(1)->getCell('A2')->getDataType())->toBe('s');
-    $sheet->setCellValue('B2', $book->getSheet(1)->getCell('A2')->getValue());
+    $teacherLabel = $teacher->nom_complet.' · '.$teacher->telephone;
+    expect($book->getSheet(1)->rangeToArray('A2:A20'))->toContain([$teacherLabel]);
+    $sheet->setCellValue('B2', $teacherLabel);
     $response = $this->withToken($token)->postJson($base.'/apercu', ['fichier' => courseAssignmentWorkbookFile($book)])
         ->assertOk()->assertJsonCount(0, 'data.erreurs')->assertJsonCount(1, 'data.lignes')
         ->assertJsonPath('data.lignes.0.enseignant_id', $teacher->id);
@@ -208,6 +213,59 @@ test('the course assignment spreadsheet round trips real courses and previews wi
     $this->withToken($token)->putJson("/api/v1/classes/{$scope['class']->id}/equipe-pedagogique", ['cours' => $rows])->assertOk();
     expect(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->firstOrFail()->enseignant_id)->toBe($teacher->id);
 });
+
+test('a school leader assigned to a course keeps leadership and receives the teacher function', function (string $leadershipRole) {
+    $scope = createAcademicMutationScope(
+        createAcademicMutationCatalog(),
+        'LEADER-TEACHER-'.$leadershipRole,
+    );
+    $leader = Utilisateur::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'etablissement_id' => $scope['establishment']->id,
+        'nom' => 'Responsable enseignant',
+        'telephone' => '+243'.random_int(100000000, 999999999),
+        'mot_de_passe' => Hash::make('password'),
+        'actif' => true,
+    ]);
+    $role = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => $leadershipRole],
+        ['name' => $leadershipRole, 'nom' => $leadershipRole, 'guard_name' => 'web', 'system_role' => true],
+    );
+    $leader->assignRole($role);
+    Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['name' => 'ENSEIGNANT', 'nom' => 'Enseignant', 'guard_name' => 'web', 'system_role' => true],
+    );
+
+    $this->withToken(academicMutationToken($scope))
+        ->putJson(
+            "/api/v1/classes/{$scope['class']->id}/cours/{$scope['node']->id}/attribution",
+            ['enseignant_id' => $leader->id],
+        )
+        ->assertOk()
+        ->assertJsonPath('data.enseignant.id', $leader->id);
+
+    $roles = $leader->refresh()->tenantRoleCodes();
+    expect($roles)->toContain($leadershipRole)
+        ->and($roles)->toContain('ENSEIGNANT');
+    $this->assertDatabaseHas('audit_logs', [
+        'action' => 'ROLE_ENSEIGNANT_CONFERE_PAR_ATTRIBUTION',
+        'ligne_cible_id' => $leader->id,
+    ]);
+
+    $leaderToken = academicMutationToken([
+        'tenant' => $scope['tenant'],
+        'user' => $leader,
+    ]);
+    $this->app['auth']->forgetGuards();
+    $this->withToken($leaderToken)
+        ->getJson('/api/v1/me/attributions')
+        ->assertOk()
+        ->assertJsonPath('data.0.id', AttributionCours::query()
+            ->where('enseignant_id', $leader->id)
+            ->where('actif', true)
+            ->value('id'));
+})->with(['GESTIONNAIRE_ECOLE', 'DIRECTEUR_ETUDES', 'ADMIN_ECOLE', 'ADMIN_TENANT']);
 
 test('spreadsheet previews reject foreign references unknown teachers formulas and duplicate courses', function (string $defect) {
     $scope = createAcademicMutationScope(createAcademicMutationCatalog());
@@ -2111,6 +2169,67 @@ test('report card composition is complete, sparse and query bounded', function (
     $this->assertDatabaseCount('notes', 1);
 });
 
+test('only the current titular can open a pupil report card and class note progress', function () {
+    $scope = createAcademicMutationScope(
+        createAcademicMutationCatalog(),
+        'TITULAR-BULLETIN',
+    );
+    $titular = createClassTitularCandidate($scope, 'BULLETIN');
+    $scope['class']->update(['titulaire_id' => $titular->id]);
+    $titularToken = academicMutationToken([
+        'tenant' => $scope['tenant'],
+        'user' => $titular,
+    ]);
+    $bulletinUri = "/api/v1/me/classes/{$scope['class']->id}/eleves/{$scope['enrollment']->id}/bulletin";
+    $progressUri = "/api/v1/me/classes/{$scope['class']->id}/progression-notes";
+
+    $this->withToken($titularToken)
+        ->getJson($bulletinUri)
+        ->assertOk()
+        ->assertJsonPath('data.bulletin.id', $scope['bulletin']->id)
+        ->assertJsonPath(
+            'data.configuration.eleve_exemple.eleve.nom',
+            $scope['student']->nom,
+        )
+        ->assertJsonPath(
+            'data.configuration.eleve_exemple.classe',
+            $scope['class']->nom,
+        )
+        ->assertJsonPath('data.configuration.slots.0.maxima', '20.00');
+
+    $this->withToken($titularToken)
+        ->getJson($progressUri)
+        ->assertOk()
+        ->assertJsonPath('data.resume.notes_saisies', 0)
+        ->assertJsonPath('data.resume.notes_attendues', 1)
+        ->assertJsonPath('data.resume.pourcentage', 0)
+        ->assertJsonPath('data.cours.0.statut', 'NON_COMMENCE');
+
+    Note::withoutGlobalScopes()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'bulletin_id' => $scope['bulletin']->id,
+        'node_id' => $scope['node']->id,
+        'periode_id' => $scope['period']->id,
+        'valeur' => 16,
+        'saisie_par' => $scope['user']->id,
+        'date_saisie' => now(),
+    ]);
+
+    $this->withToken($titularToken)
+        ->getJson($progressUri)
+        ->assertOk()
+        ->assertJsonPath('data.resume.notes_saisies', 1)
+        ->assertJsonPath('data.resume.pourcentage', 100)
+        ->assertJsonPath('data.periodes.0.statut', 'TERMINE');
+
+    $managerToken = academicMutationToken($scope);
+    // Le guard Sanctum met en cache l'utilisateur résolu entre deux requêtes
+    // d'un même test : on purge pour que le Bearer manager soit résolu à nouveau.
+    $this->app['auth']->forgetGuards();
+    $this->withToken($managerToken)->getJson($bulletinUri)->assertForbidden();
+    $this->withToken($managerToken)->getJson($progressUri)->assertForbidden();
+});
+
 test('report card reads authorize current managers and titulars including archives', function () {
     $scope = createAcademicMutationScope(createAcademicMutationCatalog());
     $uri = "/api/v1/inscriptions/{$scope['enrollment']->id}/bulletin";
@@ -3891,6 +4010,32 @@ test('an assigned teacher lists ordered entry slots with their lock state withou
 
     expect($paginatedResponse->json('links.first'))
         ->toContain('per_page=1');
+
+    $matrixColumns = $this->withToken($token)
+        ->getJson("{$uri}?per_page=100&include_calculated=1")
+        ->assertOk()
+        ->assertJsonCount(13, 'data')
+        ->assertJsonPath('meta.total', 13)
+        ->json('data');
+
+    $readOnlyColumn = collect($matrixColumns)->first(
+        fn (array $column): bool => $column['periode']['code'] === 'READ_ONLY',
+    );
+
+    expect($readOnlyColumn)
+        ->not->toBeNull()
+        ->and($readOnlyColumn['periode']['saisissable'])->toBeFalse()
+        ->and($readOnlyColumn['saisie_autorisee'])->toBeFalse();
+
+    $this->withToken($token)
+        ->getJson("{$uri}?per_page=100&include_calculated=true")
+        ->assertOk()
+        ->assertJsonCount(13, 'data');
+
+    $this->withToken($token)
+        ->getJson("{$uri}?per_page=100&include_calculated=false")
+        ->assertOk()
+        ->assertJsonCount(12, 'data');
 });
 
 test('entry slot listing fails closed outside the current teachers assignment', function () {
@@ -5621,6 +5766,194 @@ test('assigned teacher imports CSV and XLSX notes with correction and replay sem
     $this->assertDatabaseCount('notes_historiques', 1);
 });
 
+test('assigned teacher imports the wide period matrix atomically', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-15 08:00:00'));
+
+    $context = createTeacherNoteImportContext('IMPORT-MATRIX');
+    $scope = $context['scope'];
+    $totalPeriod = ModelePeriode::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'code' => 'TOTAL_S1',
+        'nom' => 'Total premier semestre',
+        'type_periode' => 'TOTAL',
+        'ordre' => 2,
+        'saisissable' => false,
+        'calculable' => true,
+        'actif' => true,
+    ]);
+    ModeleMaximum::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'node_id' => $scope['node']->id,
+        'periode_id' => $totalPeriod->id,
+        'maxima' => 20,
+        'coefficient' => 1,
+    ]);
+    $uri = "/api/v1/me/attributions/{$context['assignment']->id}/imports-notes-matrice";
+    $periodCode = $scope['period']->code;
+    $this->app['auth']->forgetGuards();
+
+    $this->withToken($context['token'])
+        ->postJson($uri, [
+            'file' => noteXlsxUpload([
+                ['matricule', 'eleve', $periodCode, 'TOT1', "version_{$periodCode}"],
+                ['MAT-IMPORT-MATRIX', 'Eleve test', 12, 12, null],
+            ]),
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.total', 1)
+        ->assertJsonPath('data.created', 1)
+        ->assertJsonPath('data.corrected', 0);
+
+    $note = Note::query()->firstOrFail();
+
+    expect($note->valeur)->toBe('12.00')
+        ->and($note->lock_version)->toBe(1);
+
+    $this->withToken($context['token'])
+        ->postJson($uri, [
+            'file' => UploadedFile::fake()->createWithContent(
+                'notes.csv',
+                "matricule,eleve,{$periodCode},TOT1,version_{$periodCode}\nMAT-IMPORT-MATRIX,Eleve test,ABS,,1\n",
+            ),
+            'motif_correction' => 'Absence confirmee',
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.total', 1)
+        ->assertJsonPath('data.corrected', 1);
+
+    expect($note->refresh()->statut_resultat)->toBe(NoteResultStatus::Absente)
+        ->and($note->lock_version)->toBe(2)
+        ->and($note->valeur)->toBeNull();
+
+    $this->withToken($context['token'])
+        ->postJson($uri, [
+            'file' => UploadedFile::fake()->createWithContent(
+                'notes.csv',
+                "matricule,eleve,{$periodCode},TOT1,version_{$periodCode}\nMAT-IMPORT-MATRIX,Eleve test,14,,1\n",
+            ),
+            'motif_correction' => 'Export obsolete',
+        ])
+        ->assertConflict()
+        ->assertJsonPath('code', 'NOTE_VERSION_CONFLICT');
+
+    expect($note->refresh()->statut_resultat)->toBe(NoteResultStatus::Absente)
+        ->and($note->lock_version)->toBe(2);
+});
+
+test('teacher note entry follows the school calendar open window', function () {
+    $this->travelTo(CarbonImmutable::parse('2026-10-15 08:00:00'));
+
+    $context = createTeacherNoteImportContext('CALENDAR');
+    $scope = $context['scope'];
+    $futurePeriod = ModelePeriode::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'code' => 'CALENDAR_P2',
+        'nom' => 'Période future',
+        'type_periode' => 'PERIODE',
+        'ordre' => 2,
+        'saisissable' => true,
+        'calculable' => false,
+        'actif' => true,
+    ]);
+    $futureSlot = ModeleMaximum::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'node_id' => $scope['node']->id,
+        'periode_id' => $futurePeriod->id,
+        'maxima' => 20,
+        'coefficient' => 1,
+    ]);
+    $calendar = CalendrierScolaire::query()->create([
+        'code' => 'CALENDAR-BOUNDARY',
+        'libelle' => 'Calendrier frontière',
+        'date_debut' => '2026-09-01',
+        'date_fin' => '2027-07-31',
+    ]);
+    $openCalendarPeriod = CalendrierPeriode::query()->create([
+        'calendrier_scolaire_id' => $calendar->id,
+        'code' => $scope['period']->code,
+        'nom' => 'Période ouverte',
+        'type_periode' => 'PERIODE',
+        'date_debut' => '2026-09-01',
+        'date_fin' => '2026-10-31',
+        'ordre' => 1,
+    ]);
+    $closedCalendarPeriod = CalendrierPeriode::query()->create([
+        'calendrier_scolaire_id' => $calendar->id,
+        'code' => 'CALENDAR_P2',
+        'nom' => 'Période future',
+        'type_periode' => 'PERIODE',
+        'date_debut' => '2026-11-01',
+        'date_fin' => '2027-02-20',
+        'ordre' => 2,
+    ]);
+    AnneePeriodeMapping::query()->create([
+        'annee_scolaire_id' => $scope['year']->id,
+        'calendrier_periode_id' => $openCalendarPeriod->id,
+        'code_periode_template' => $scope['period']->code,
+        'saisie_ouverte' => false,
+        'verrouillee' => false,
+    ]);
+    AnneePeriodeMapping::query()->create([
+        'annee_scolaire_id' => $scope['year']->id,
+        'calendrier_periode_id' => $closedCalendarPeriod->id,
+        'code_periode_template' => 'CALENDAR_P2',
+        'saisie_ouverte' => false,
+        'verrouillee' => false,
+    ]);
+    $scope['year']->update(['calendrier_scolaire_id' => $calendar->id]);
+    $this->app['auth']->forgetGuards();
+
+    $columns = $this->withToken($context['token'])
+        ->getJson("/api/v1/me/attributions/{$context['assignment']->id}/creneaux?per_page=100&include_calculated=true")
+        ->assertOk()
+        ->json('data');
+    $openColumn = collect($columns)->firstWhere('id', $context['slot']->id);
+    $closedColumn = collect($columns)->firstWhere('id', $futureSlot->id);
+
+    expect($openColumn['saisie_autorisee'])->toBeTrue()
+        ->and($closedColumn['saisie_autorisee'])->toBeFalse();
+
+    $noteUri = "/api/v1/me/attributions/{$context['assignment']->id}/creneaux/{$context['slot']->id}/inscriptions/{$scope['enrollment']->id}/note";
+
+    $this->withToken($context['token'])
+        ->putJson($noteUri, ['valeur' => 12])
+        ->assertOk()
+        ->assertJsonPath('data.note.valeur', '12.00');
+
+    $closedNoteUri = "/api/v1/me/attributions/{$context['assignment']->id}/creneaux/{$futureSlot->id}/inscriptions/{$scope['enrollment']->id}/note";
+
+    $this->withToken($context['token'])
+        ->putJson($closedNoteUri, ['valeur' => 15])
+        ->assertStatus(423)
+        ->assertJsonPath(
+            'detail',
+            'The note entry period is closed on the school calendar.',
+        );
+
+    $this->withToken($context['token'])
+        ->postJson("/api/v1/me/attributions/{$context['assignment']->id}/imports-notes-matrice", [
+            'file' => noteXlsxUpload([
+                [
+                    'matricule',
+                    'eleve',
+                    $scope['period']->code,
+                    'CALENDAR_P2',
+                    "version_{$scope['period']->code}",
+                    'version_CALENDAR_P2',
+                ],
+                ['MAT-CALENDAR', 'Eleve test', 14, 16, null, null],
+            ]),
+        ])
+        ->assertStatus(423);
+
+    $this->assertDatabaseCount('notes', 1);
+    expect(Note::query()->firstOrFail()->valeur)->toBe('12.00');
+});
+
 test('teacher imports absent and exempt results from CSV and XLSX atomically', function () {
     $this->travelTo(CarbonImmutable::parse('2026-10-15 08:00:00'));
 
@@ -6718,6 +7051,9 @@ test('academic routes expose the safer contract and authenticated API throttling
         ))->toBeTrue()
         ->and(Route::has(
             'api.v1.me.attributions.creneaux.imports-notes.store',
+        ))->toBeTrue()
+        ->and(Route::has(
+            'api.v1.me.attributions.imports-notes-matrice.store',
         ))->toBeTrue()
         ->and(Route::has('api.v1.classes.titulariat.update'))->toBeTrue()
         ->and(Route::has('api.v1.notes.index'))->toBeTrue()

@@ -44,6 +44,31 @@ final class ImportMyCourseAssignmentNotesService
             allowLockVersions: true,
         );
 
+        return $this->importRows(
+            rows: $rows,
+            assignment: $assignment,
+            slot: $slot,
+            teacher: $teacher,
+            correctionReason: $correctionReason,
+        );
+    }
+
+    /**
+     * @param  list<array{
+     *     row_number: int,
+     *     matricule: string,
+     *     note: ?string,
+     *     status: NoteResultStatus,
+     *     lock_version: ?int
+     * }>  $rows
+     */
+    public function importRows(
+        array $rows,
+        AttributionCours $assignment,
+        ModeleMaximum $slot,
+        Utilisateur $teacher,
+        ?string $correctionReason,
+    ): ImportedCourseAssignmentNotes {
         return DB::transaction(function () use (
             $rows,
             $assignment,

@@ -38,7 +38,7 @@ final class SaveClassTeachingTeamService
             $teacherIds = collect($data['cours'])->pluck('enseignant_id')->map(fn ($id): int => (int) $id)->unique();
             $teachers = Utilisateur::query()->where('tenant_id', $class->tenant_id)
                 ->where('etablissement_id', $class->etablissement_id)->where('actif', true)
-                ->whereHas('roles', fn ($query) => $query->where('roles.name', 'ENSEIGNANT')->validForTenant($class->tenant_id))
+                ->eligibleForCourseTeaching($class->tenant_id)
                 ->whereIn('id', $teacherIds)->orderBy('id')->lockForUpdate()->get();
             if ($teachers->count() !== $teacherIds->count()) {
                 throw (new ModelNotFoundException)->setModel(Utilisateur::class);
@@ -67,8 +67,11 @@ final class SaveClassTeachingTeamService
                         ->where('actif', true))
                     ->findOrFail($assignment['node_id']);
                 $current = $class->attributionsCours()->where('node_id', $course->id)->where('actif', true)->get();
+                $selectedTeacher = $teachers->firstWhere('id', (int) $assignment['enseignant_id']);
 
-                if ($current->count() === 1 && $current->first()->enseignant_id === (int) $assignment['enseignant_id']) {
+                if ($current->count() === 1
+                    && $current->first()->enseignant_id === (int) $assignment['enseignant_id']
+                    && $selectedTeacher?->hasTenantRole('ENSEIGNANT', $class->tenant_id)) {
                     continue;
                 }
 

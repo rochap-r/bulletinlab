@@ -15,7 +15,7 @@ final class AnneeScolaireController extends Controller
     public function index(): JsonResponse
     {
         $annees = AnneeScolaire::query()
-            ->with('calendrierScolaire.periodes')
+            ->with(['calendrierScolaire.profilsCycles', 'calendrierScolaire.periodes', 'calendrierScolaire.evenements'])
             ->orderByDesc('date_debut')
             ->get();
 
@@ -30,7 +30,7 @@ final class AnneeScolaireController extends Controller
             'cloturee' => false,
         ]);
 
-        return PlatformSchoolYearResource::make($annee->load('calendrierScolaire.periodes'))
+        return PlatformSchoolYearResource::make($annee->load(['calendrierScolaire.profilsCycles', 'calendrierScolaire.periodes', 'calendrierScolaire.evenements']))
             ->response()
             ->setStatusCode(201);
     }
@@ -40,7 +40,7 @@ final class AnneeScolaireController extends Controller
         $anneeModel = AnneeScolaire::query()->findOrFail($annee);
         $anneeModel->update($request->validated());
 
-        return PlatformSchoolYearResource::make($anneeModel->refresh()->load('calendrierScolaire.periodes'))
+        return PlatformSchoolYearResource::make($anneeModel->refresh()->load(['calendrierScolaire.profilsCycles', 'calendrierScolaire.periodes', 'calendrierScolaire.evenements']))
             ->response();
     }
 
@@ -60,7 +60,7 @@ final class AnneeScolaireController extends Controller
 
         $anneeModel->update(['active' => true]);
 
-        return PlatformSchoolYearResource::make($anneeModel->refresh()->load('calendrierScolaire.periodes'))
+        return PlatformSchoolYearResource::make($anneeModel->refresh()->load(['calendrierScolaire.profilsCycles', 'calendrierScolaire.periodes', 'calendrierScolaire.evenements']))
             ->response();
     }
 
@@ -75,7 +75,7 @@ final class AnneeScolaireController extends Controller
             ]);
         }
 
-        return PlatformSchoolYearResource::make($anneeModel->refresh()->load('calendrierScolaire.periodes'))
+        return PlatformSchoolYearResource::make($anneeModel->refresh()->load(['calendrierScolaire.profilsCycles', 'calendrierScolaire.periodes', 'calendrierScolaire.evenements']))
             ->response();
     }
 }

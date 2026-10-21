@@ -27,7 +27,7 @@ final class CourseAssignmentSpreadsheetService
     {
         return Utilisateur::query()->where('tenant_id', $class->tenant_id)
             ->where('etablissement_id', $class->etablissement_id)->where('actif', true)
-            ->whereHas('roles', fn ($query) => $query->where('roles.name', 'ENSEIGNANT')->validForTenant($class->tenant_id))
+            ->eligibleForCourseTeaching($class->tenant_id)
             ->orderBy('nom')->get();
     }
 
@@ -151,7 +151,8 @@ final class CourseAssignmentSpreadsheetService
                 $seen[$course->id] = true;
                 $teacher = $matches->first();
                 $previous = $course->attributionsCours->first();
-                if ($previous?->enseignant_id === $teacher->id) {
+                if ($previous?->enseignant_id === $teacher->id
+                    && $teacher->hasTenantRole('ENSEIGNANT', $class->tenant_id)) {
                     continue;
                 }
                 $lines[] = ['ligne' => $line, 'node_id' => $course->id, 'cours' => $course->libelle,

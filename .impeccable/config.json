@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "createdAt": "2026-10-17T19:49:43.623Z",
+        "reason": "Official ministry bulletin templates intentionally reproduce the source form typography; this is a domain-fidelity exception."
+      }
+    ]
+  }
+}

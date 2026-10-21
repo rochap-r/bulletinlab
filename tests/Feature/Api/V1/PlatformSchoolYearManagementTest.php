@@ -180,6 +180,30 @@ test('duplicate years are rejected within the same calendar', function () {
         ->assertJsonValidationErrors(['libelle']);
 });
 
+test('the global school year label cannot be reused by another calendar', function () {
+    $token = makePlatformYearAdminToken();
+    $firstCalendar = makeCalendarForTests();
+    $secondCalendar = makeCalendarForTests();
+    AnneeScolaire::query()->create([
+        'calendrier_scolaire_id' => $firstCalendar->id,
+        'libelle' => '2026-2027',
+        'date_debut' => '2026-09-01',
+        'date_fin' => '2027-07-31',
+        'active' => false,
+        'cloturee' => false,
+    ]);
+
+    $this->withToken($token)
+        ->postJson('/api/v1/platform/annees-scolaires', [
+            'calendrier_scolaire_id' => $secondCalendar->id,
+            'libelle' => '2026-2027',
+            'date_debut' => '2026-09-01',
+            'date_fin' => '2027-07-31',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['libelle']);
+});
+
 test('a draft school year can be updated', function () {
     $token = makePlatformYearAdminToken();
     $calendrier = makeCalendarForTests();

@@ -143,8 +143,8 @@ test('every documented OpenAPI operation matches a named runtime route', functio
                     'route_name' => (string) $route->getName(),
                 ]),
         );
-    expect($operations)->toHaveCount(39)
-        ->and($operations->pluck('operation.operationId')->unique())->toHaveCount(39);
+    expect($operations)->toHaveCount(40)
+        ->and($operations->pluck('operation.operationId')->unique())->toHaveCount(40);
 
     foreach ($operations as $documentedOperation) {
         expect($runtimeRoutes->contains(

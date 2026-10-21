@@ -5,8 +5,10 @@ namespace App\Domains\Teacher\Services;
 use App\Domains\Evaluation\Exceptions\PeriodLockedException;
 use App\Domains\Teacher\DTOs\LockedCourseAssignmentNoteContext;
 use App\Domains\Teacher\Exceptions\TeacherNoteEntryConflictException;
+use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
+use App\Models\CalendrierPeriode;
 use App\Models\Classe;
 use App\Models\ModeleBulletin;
 use App\Models\ModeleMaximum;
@@ -37,6 +39,8 @@ final class LockMyCourseAssignmentNoteContextService
             $assignment,
             $model,
             $course,
+            $schoolYear,
+            $today,
         );
         $this->lockOpenPeriodState($schoolClass, $lockedSlot);
         $this->lockCurrentAssignment($assignment, $teacher, $today);
@@ -131,6 +135,8 @@ final class LockMyCourseAssignmentNoteContextService
         AttributionCours $assignment,
         ModeleBulletin $model,
         ModeleNode $course,
+        AnneeScolaire $schoolYear,
+        CarbonImmutable $today,
     ): ModeleMaximum {
         $lockedSlot = ModeleMaximum::query()
             ->whereKey($slot->getKey())
@@ -155,7 +161,55 @@ final class LockMyCourseAssignmentNoteContextService
             );
         }
 
+        $this->assertCalendarPeriodOpen($period, $schoolYear, $today);
+
         return $lockedSlot;
+    }
+
+    /**
+     * A template period mapped on the school calendar accepts writes only
+     * while today falls inside the mapped calendar period window. Years
+     * without a calendar or unmapped template periods stay writable.
+     */
+    private function assertCalendarPeriodOpen(
+        ModelePeriode $period,
+        AnneeScolaire $schoolYear,
+        CarbonImmutable $today,
+    ): void {
+        if ($schoolYear->calendrier_scolaire_id === null) {
+            return;
+        }
+
+        $mapping = AnneePeriodeMapping::query()
+            ->where('annee_scolaire_id', $schoolYear->getKey())
+            ->where('code_periode_template', $period->code)
+            ->first();
+
+        if ($mapping === null) {
+            return;
+        }
+
+        $calendarPeriod = CalendrierPeriode::query()
+            ->whereKey($mapping->calendrier_periode_id)
+            ->where(
+                'calendrier_scolaire_id',
+                $schoolYear->calendrier_scolaire_id,
+            )
+            ->first();
+
+        $isOpen = $calendarPeriod !== null
+            && $today->gte(
+                CarbonImmutable::parse($calendarPeriod->date_debut),
+            )
+            && $today->lte(
+                CarbonImmutable::parse($calendarPeriod->date_fin),
+            );
+
+        if (! $isOpen) {
+            throw new PeriodLockedException(
+                'The note entry period is closed on the school calendar.',
+            );
+        }
     }
 
     private function lockOpenPeriodState(

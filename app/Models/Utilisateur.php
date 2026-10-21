@@ -6,6 +6,7 @@ use App\Models\Concerns\HasPublicId;
 use App\Support\PhoneNumberNormalizer;
 use Illuminate\Contracts\Auth\Access\Authorizable as AuthorizableContract;
 use Illuminate\Contracts\Auth\Authenticatable;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -30,6 +31,16 @@ class Utilisateur extends Model implements Authenticatable, AuthorizableContract
     protected $table = 'utilisateurs';
 
     protected string $guard_name = 'web';
+
+    /** Rôles pouvant recevoir un cours avant l'ajout automatique de la fonction enseignant. */
+    public const COURSE_TEACHING_ELIGIBLE_ROLES = [
+        'ENSEIGNANT',
+        'TITULAIRE',
+        'GESTIONNAIRE_ECOLE',
+        'DIRECTEUR_ETUDES',
+        'ADMIN_ECOLE',
+        'ADMIN_TENANT',
+    ];
 
     protected $fillable = [
         'tenant_id',
@@ -151,6 +162,20 @@ class Utilisateur extends Model implements Authenticatable, AuthorizableContract
     public function attributionsCours(): HasMany
     {
         return $this->hasMany(AttributionCours::class, 'enseignant_id');
+    }
+
+    /**
+     * Restreint aux membres dont la fonction actuelle permet de recevoir un cours.
+     * L'attribution ajoutera ensuite le rôle secondaire ENSEIGNANT si nécessaire.
+     *
+     * @param  Builder<self>  $query
+     * @return Builder<self>
+     */
+    public function scopeEligibleForCourseTeaching(Builder $query, int $tenantId): Builder
+    {
+        return $query->whereHas('roles', fn (Builder $roles): Builder => $roles
+            ->whereIn('roles.code', self::COURSE_TEACHING_ELIGIBLE_ROLES)
+            ->validForTenant($tenantId));
     }
 
     /**

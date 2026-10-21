@@ -18,6 +18,7 @@ class CalendrierPeriodeResource extends JsonResource
             'code' => $this->code,
             'nom' => $this->nom,
             'type_periode' => $this->type_periode,
+            'cycle_scolaire' => $this->cycle_scolaire,
             'date_debut' => $this->date_debut,
             'date_fin' => $this->date_fin,
             'ordre' => $this->ordre,

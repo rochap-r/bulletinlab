@@ -5,7 +5,9 @@ namespace App\Domains\Evaluation\Services;
 use App\Domains\Evaluation\Enums\NoteResultStatus;
 use App\Domains\Evaluation\Exceptions\NoteImportException;
 use App\Domains\Evaluation\Imports\NoteSpreadsheetImport;
+use App\Models\ModeleMaximum;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Maatwebsite\Excel\Excel;
 use Throwable;
@@ -214,6 +216,232 @@ final class ReadNoteSpreadsheetService
         }
 
         return $rows;
+    }
+
+    /**
+     * @param  Collection<int, ModeleMaximum>  $columns
+     * @return array<int, list<array{
+     *     row_number: int,
+     *     matricule: string,
+     *     note: ?string,
+     *     status: NoteResultStatus,
+     *     lock_version: ?int
+     * }>>
+     */
+    public function readMatrix(
+        UploadedFile $file,
+        Collection $columns,
+    ): array {
+        $entryColumns = $columns
+            ->filter(
+                fn (ModeleMaximum $column): bool => (bool) $column->periode->saisissable,
+            )
+            ->values();
+        $expectedHeader = [
+            'matricule',
+            'eleve',
+            ...$columns
+                ->map(
+                    fn (ModeleMaximum $column): string => Str::lower(
+                        $this->matrixImportCode((string) $column->periode->code),
+                    ),
+                )
+                ->all(),
+            ...$entryColumns
+                ->map(
+                    fn (ModeleMaximum $column): string => 'version_'.Str::lower(
+                        $this->matrixImportCode((string) $column->periode->code),
+                    ),
+                )
+                ->all(),
+        ];
+        $extension = Str::lower($file->getClientOriginalExtension());
+        $readerType = match ($extension) {
+            'csv' => Excel::CSV,
+            'xlsx' => Excel::XLSX,
+            default => throw new NoteImportException(
+                'Only CSV and XLSX note files are supported.',
+            ),
+        };
+
+        $this->assertSafeDimensions($file, $extension, count($expectedHeader));
+
+        try {
+            $sheets = $this->excel->toArray(
+                new NoteSpreadsheetImport(self::MAX_ROWS + 2),
+                $file,
+                readerType: $readerType,
+            );
+        } catch (Throwable) {
+            throw new NoteImportException(
+                'The CSV or XLSX note file could not be read.',
+            );
+        }
+
+        $nonEmptySheets = collect($sheets)
+            ->filter(
+                fn (array $sheet): bool => collect($sheet)
+                    ->contains(fn (array $row): bool => ! $this->isEmptyRow($row)),
+            )
+            ->values();
+
+        if ($nonEmptySheets->count() !== 1) {
+            throw new NoteImportException(
+                'The note file must contain exactly one non-empty worksheet.',
+            );
+        }
+
+        /** @var list<array<int, mixed>> $sheet */
+        $sheet = $nonEmptySheets->first();
+
+        if (count($sheet) >= self::MAX_ROWS + 2) {
+            throw new NoteImportException(
+                'The note file exceeds the limit of '.self::MAX_ROWS.' data rows.',
+            );
+        }
+
+        $header = array_shift($sheet);
+
+        if (! is_array($header)
+            || ! $this->hasExpectedHeader($header, $expectedHeader)) {
+            throw new NoteImportException(
+                'The matrix header is invalid. Download a fresh grade matrix template.',
+            );
+        }
+
+        $rowsBySlot = [];
+        $matricules = [];
+        $hasImportableCell = false;
+        $displayColumnOffset = 2;
+        $versionColumnOffset = $displayColumnOffset + $columns->count();
+
+        foreach ($sheet as $index => $line) {
+            $rowNumber = $index + 2;
+
+            if ($this->isEmptyRow($line)) {
+                continue;
+            }
+
+            if (count($line) !== count($expectedHeader)) {
+                throw new NoteImportException(
+                    "Note row {$rowNumber} must contain exactly ".count($expectedHeader).' columns.',
+                );
+            }
+
+            $matricule = trim((string) $line[0]);
+            $normalizedMatricule = Str::lower($matricule);
+
+            if ($matricule === ''
+                || mb_strlen($matricule) > 80
+                || preg_match('/[\x00-\x1F\x7F]/u', $matricule) !== 0
+                || in_array($normalizedMatricule, $matricules, true)) {
+                throw new NoteImportException(
+                    "Note row {$rowNumber} contains an invalid or duplicate matricule.",
+                );
+            }
+
+            $matricules[] = $normalizedMatricule;
+            $entryColumnIndex = 0;
+
+            foreach ($columns->values() as $columnIndex => $column) {
+                $cell = trim((string) $line[$displayColumnOffset + $columnIndex]);
+
+                if (! $column->periode->saisissable) {
+                    if (mb_strlen($cell) > 40
+                        || preg_match('/[\x00-\x1F\x7F]/u', $cell) !== 0) {
+                        throw new NoteImportException(
+                            "Note row {$rowNumber} contains an invalid calculated total.",
+                        );
+                    }
+
+                    continue;
+                }
+
+                $versionValue = trim(
+                    (string) $line[$versionColumnOffset + $entryColumnIndex],
+                );
+                $entryColumnIndex++;
+
+                if ($cell === '') {
+                    continue;
+                }
+
+                if ((bool) $column->verrouille) {
+                    throw new NoteImportException(
+                        "Note row {$rowNumber} targets a locked period.",
+                    );
+                }
+
+                $parsed = $this->parseMatrixCell($cell, $rowNumber);
+                $hasValidVersion = $versionValue === ''
+                    || (
+                        preg_match('/^[1-9]\d{0,9}$/D', $versionValue) === 1
+                        && (int) $versionValue <= 4294967294
+                    );
+
+                if (! $hasValidVersion) {
+                    throw new NoteImportException(
+                        "Note row {$rowNumber} contains an invalid lock version.",
+                    );
+                }
+
+                $rowsBySlot[$column->getKey()][] = [
+                    'row_number' => $rowNumber,
+                    'matricule' => $matricule,
+                    'note' => $parsed['note'],
+                    'status' => $parsed['status'],
+                    'lock_version' => $versionValue === '' ? null : (int) $versionValue,
+                ];
+                $hasImportableCell = true;
+            }
+        }
+
+        if (! $hasImportableCell) {
+            throw new NoteImportException(
+                'The note matrix contains no editable note cells.',
+            );
+        }
+
+        return $rowsBySlot;
+    }
+
+    /**
+     * @return array{note: ?string, status: NoteResultStatus}
+     */
+    private function parseMatrixCell(string $cell, int $rowNumber): array
+    {
+        $normalized = Str::upper($cell);
+
+        if (in_array($normalized, ['ABS', 'ABSENTE'], true)) {
+            return ['note' => null, 'status' => NoteResultStatus::Absente];
+        }
+
+        if (in_array($normalized, ['DISP', 'DISPENSEE'], true)) {
+            return ['note' => null, 'status' => NoteResultStatus::Dispensee];
+        }
+
+        $note = str_replace(',', '.', $cell);
+
+        if (preg_match('/^\d{1,6}(?:\.\d{1,2})?$/D', $note) !== 1) {
+            throw new NoteImportException(
+                "Note row {$rowNumber} contains an invalid note. Use a number, ABS, or DISP.",
+            );
+        }
+
+        return ['note' => $note, 'status' => NoteResultStatus::Saisie];
+    }
+
+    private function matrixImportCode(string $code): string
+    {
+        if (preg_match('/^EXAM_S(\d+)$/i', $code, $matches) === 1) {
+            return 'EXAM'.$matches[1];
+        }
+
+        if (preg_match('/^TOTAL_S(\d+)$/i', $code, $matches) === 1) {
+            return 'TOT'.$matches[1];
+        }
+
+        return Str::upper($code) === 'TOTAL_GENERAL' ? 'TOTG' : $code;
     }
 
     /**

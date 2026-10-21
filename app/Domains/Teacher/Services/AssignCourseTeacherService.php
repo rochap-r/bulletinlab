@@ -13,6 +13,7 @@ use App\Models\Classe;
 use App\Models\ModeleBulletin;
 use App\Models\ModeleMaximum;
 use App\Models\ModeleNode;
+use App\Models\Role;
 use App\Models\Utilisateur;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
@@ -90,6 +91,7 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
                 $lockedClass,
                 $data->teacherId,
             );
+            $this->ensureTeacherRole($teacher, $actor, $lockedClass);
             [$startDate, $endDate] = $this->resolveAssignmentDates(
                 $schoolYear,
                 $data,
@@ -220,11 +222,7 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
             ->where('tenant_id', $class->tenant_id)
             ->where('etablissement_id', $class->etablissement_id)
             ->where('actif', true)
-            ->whereHas('roles', function (Builder $query) use ($class): void {
-                $query
-                    ->where('roles.name', 'ENSEIGNANT')
-                    ->validForTenant($class->tenant_id);
-            })
+            ->eligibleForCourseTeaching($class->tenant_id)
             ->lockForUpdate()
             ->first();
 
@@ -236,6 +234,40 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
         }
 
         return $teacher;
+    }
+
+    private function ensureTeacherRole(
+        Utilisateur $teacher,
+        Utilisateur $actor,
+        Classe $class,
+    ): void {
+        if ($teacher->hasTenantRole('ENSEIGNANT', $class->tenant_id)) {
+            return;
+        }
+
+        $teacherRole = Role::query()
+            ->where(function (Builder $query): void {
+                $query->where('roles.name', 'ENSEIGNANT')
+                    ->orWhere('roles.code', 'ENSEIGNANT');
+            })
+            ->validForTenant($class->tenant_id)
+            ->orderByRaw('tenant_id IS NULL DESC')
+            ->firstOrFail();
+
+        $teacher->assignRole($teacherRole);
+        $teacher->unsetRelation('roles');
+
+        AuditLog::query()->create([
+            'tenant_id' => $class->tenant_id,
+            'utilisateur_id' => $actor->getKey(),
+            'action' => 'ROLE_ENSEIGNANT_CONFERE_PAR_ATTRIBUTION',
+            'table_cible' => $teacher->getTable(),
+            'ligne_cible_id' => $teacher->getKey(),
+            'nouvelles_valeurs' => [
+                'role' => 'ENSEIGNANT',
+                'classe_id' => $class->getKey(),
+            ],
+        ]);
     }
 
     /**

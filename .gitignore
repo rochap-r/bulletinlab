@@ -30,6 +30,7 @@ Thumbs.db
 # Secrets and machine-specific environment files
 .env.*
 !.env.example
+!.env.production.example
 
 # Local agent/editor tools and implementation notes
 /.agents/

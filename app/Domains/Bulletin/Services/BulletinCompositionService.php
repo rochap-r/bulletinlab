@@ -53,10 +53,20 @@ final class BulletinCompositionService
             );
         }
 
-        $enrollment->loadMissing('eleve');
+        $enrollment->loadMissing([
+            'eleve',
+            'classe.etablissement',
+            'classe.cycle',
+            'classe.niveau',
+            'classe.option',
+            'anneeScolaire',
+        ]);
         $model->load([
+            'systemTemplate',
+            'layout',
             'nodes' => fn ($query) => $query
                 ->where('tenant_id', $enrollment->tenant_id)
+                ->with('matiere')
                 ->orderBy('ordre')
                 ->orderBy('id'),
             'periodes' => fn ($query) => $query
@@ -67,6 +77,11 @@ final class BulletinCompositionService
                 ->where('tenant_id', $enrollment->tenant_id)
                 ->orderBy('node_id')
                 ->orderBy('periode_id')
+                ->orderBy('id'),
+            'blocs' => fn ($query) => $query
+                ->where('tenant_id', $enrollment->tenant_id)
+                ->with('bloc')
+                ->orderBy('ordre')
                 ->orderBy('id'),
         ]);
         $reportCard->load([

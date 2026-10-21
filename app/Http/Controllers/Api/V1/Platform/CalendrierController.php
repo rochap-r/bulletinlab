@@ -2,21 +2,26 @@
 
 namespace App\Http\Controllers\Api\V1\Platform;
 
+use App\Domains\SchoolYear\Actions\PublishNationalCalendarAction;
 use App\Domains\SchoolYear\Services\PlatformCalendarService;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\Platform\PlatformCalendrierRequest;
 use App\Http\Resources\Api\V1\Platform\PlatformCalendrierResource;
+use App\Http\Resources\Api\V1\Platform\PlatformSchoolYearResource;
 use App\Models\CalendrierScolaire;
 use Illuminate\Http\JsonResponse;
 
 final class CalendrierController extends Controller
 {
-    public function __construct(private PlatformCalendarService $calendarService) {}
+    public function __construct(
+        private PlatformCalendarService $calendarService,
+        private PublishNationalCalendarAction $publishNationalCalendar,
+    ) {}
 
     public function index(): JsonResponse
     {
         $calendriers = CalendrierScolaire::query()
-            ->with('periodes')
+            ->with(['profilsCycles', 'periodes', 'evenements', 'annees'])
             ->withCount('annees')
             ->withExists('mappings')
             ->orderByDesc('date_debut')
@@ -27,7 +32,7 @@ final class CalendrierController extends Controller
 
     public function show(int $calendrier): JsonResponse
     {
-        return PlatformCalendrierResource::make(CalendrierScolaire::query()->with('periodes')->withCount('annees')->withExists('mappings')->findOrFail($calendrier))->response();
+        return PlatformCalendrierResource::make(CalendrierScolaire::query()->with(['profilsCycles', 'periodes', 'evenements', 'annees'])->withCount('annees')->withExists('mappings')->findOrFail($calendrier))->response();
     }
 
     public function store(PlatformCalendrierRequest $request): JsonResponse
@@ -45,5 +50,18 @@ final class CalendrierController extends Controller
         $this->calendarService->delete($calendrier);
 
         return response()->json(null, 204);
+    }
+
+    public function publish(CalendrierScolaire $calendrier): JsonResponse
+    {
+        $result = $this->publishNationalCalendar->handle($calendrier);
+
+        return PlatformSchoolYearResource::make($result['annee'])
+            ->additional(['meta' => [
+                'created' => $result['created'],
+                'scope' => 'GLOBAL',
+            ]])
+            ->response()
+            ->setStatusCode($result['created'] ? 201 : 200);
     }
 }

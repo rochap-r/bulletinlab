@@ -521,6 +521,16 @@
                     },
                     {
                         "$ref": "#/components/parameters/Page"
+                    },
+                    {
+                        "name": "include_calculated",
+                        "in": "query",
+                        "required": false,
+                        "description": "Include calculated read-only period columns such as semester totals.",
+                        "schema": {
+                            "type": "boolean",
+                            "default": false
+                        }
                     }
                 ],
                 "responses": {
@@ -541,6 +551,63 @@
                     },
                     "422": {
                         "$ref": "#/components/responses/ValidationFailed"
+                    },
+                    "429": {
+                        "$ref": "#/components/responses/TooManyRequests"
+                    },
+                    "default": {
+                        "$ref": "#/components/responses/Problem"
+                    }
+                }
+            }
+        },
+        "/me/attributions/{attribution}/imports-notes-matrice": {
+            "post": {
+                "tags": [
+                    "Teachers"
+                ],
+                "summary": "Import the current assignment grade matrix",
+                "description": "Imports one wide CSV or XLSX matrix with one visible column per configured period. Only writable period cells are applied; calculated totals are ignored and recomputed. Technical version columns preserve optimistic concurrency. The complete matrix is atomic.",
+                "operationId": "api.v1.me.attributions.imports-notes-matrice.store",
+                "x-laravel-route-name": "api.v1.me.attributions.imports-notes-matrice.store",
+                "x-context": "establishment",
+                "x-authorization-ability": "importNotes",
+                "x-temporal-scope": "current-only",
+                "x-idempotency-mode": "state-replay-only",
+                "security": [
+                    {
+                        "sanctumBearer": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "$ref": "#/components/parameters/CourseAssignmentId"
+                    }
+                ],
+                "requestBody": {
+                    "$ref": "#/components/requestBodies/MyCourseAssignmentNoteImport"
+                },
+                "responses": {
+                    "200": {
+                        "$ref": "#/components/responses/ImportedMyCourseAssignmentNotes"
+                    },
+                    "401": {
+                        "$ref": "#/components/responses/Unauthorized"
+                    },
+                    "403": {
+                        "$ref": "#/components/responses/Forbidden"
+                    },
+                    "404": {
+                        "$ref": "#/components/responses/NotFound"
+                    },
+                    "409": {
+                        "$ref": "#/components/responses/Conflict"
+                    },
+                    "422": {
+                        "$ref": "#/components/responses/ValidationFailed"
+                    },
+                    "423": {
+                        "$ref": "#/components/responses/Locked"
                     },
                     "429": {
                         "$ref": "#/components/responses/TooManyRequests"
@@ -4439,6 +4506,16 @@
                             "ordre": {
                                 "type": "integer",
                                 "minimum": 0
+                            },
+                            "saisissable": {
+                                "type": "boolean"
+                            },
+                            "calculable": {
+                                "type": "boolean"
+                            },
+                            "import_code": {
+                                "type": "string",
+                                "description": "Stable visible matrix header, for example P1, EXAM1, TOT1 or TOTG."
                             }
                         }
                     },
@@ -4548,7 +4625,8 @@
                         "type": "boolean"
                     },
                     "saisie_autorisee": {
-                        "type": "boolean"
+                        "type": "boolean",
+                        "description": "True only when the period is saisissable, not locked and currently inside its school calendar window."
                     }
                 }
             },
