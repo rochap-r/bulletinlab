@@ -19,11 +19,13 @@ Stack de production conteneurisée : API Laravel (PHP 8.4-FPM + nginx), SPA Reac
 ## Vue d'ensemble
 
 ```
-                  Votre LB / nginx externe (TLS : Let's Encrypt, etc.)
+                  Nginx Ubuntu / reverse proxy public (TLS)
                   │
-  app.exemple.cd ─┼──► frontend:8080   nginx statique (SPA React) + proxy /api ─┐
-  api.exemple.cd ─┼──► api-nginx:8081  nginx interne ──fastcgi──► api:9000       │
-                  │                                    (php-fpm Laravel) ◄───────┘
+  dev.topscolaire.com ─► 127.0.0.1:8080 frontend nginx (SPA + proxy /api)
+                                              │ /api/
+                                              ▼
+                                  api-nginx ──FastCGI──► api:9000
+                                                        PHP-FPM Laravel
                   │        queue     : php artisan queue:work
                   │        scheduler : php artisan schedule:work
                   │        db        : PostgreSQL 18     (volume pg_data)
@@ -37,19 +39,40 @@ Stack de production conteneurisée : API Laravel (PHP 8.4-FPM + nginx), SPA Reac
 | `api` | build `docker/api` | PHP 8.4-FPM, application Laravel |
 | `queue` | idem image API | Workers de file d'attente (`queue:work`) |
 | `scheduler` | idem image API | Planificateur (`schedule:work`, ex. `sanctum:prune-expired`) |
-| `migrate` | idem image API | One-shot : `php artisan migrate --force` à chaque `up` |
+| `migrate` | idem image API | One-shot à lancer manuellement avec le profil `maintenance` |
 | `db` | postgres:18 | Base de données PostgreSQL (volume `pg_data`) |
 | `redis` | redis:7-alpine | Cache, sessions et queue (AOF activé) |
 | `adminer` | adminer:5 | Console d'administration PG — **profil `tools`**, démarrée à la demande, bindée sur 127.0.0.1 |
 
-L'authentification est stateless (tokens Sanctum Bearer) : aucun cookie cross-domaine, le sous-domaine `api.` est appelé directement ou via le proxy `/api` du frontend.
+L'authentification est stateless (tokens Sanctum Bearer) : le navigateur appelle l'API via `/api` sur le même domaine que le frontend.
 
 ## Prérequis
 
 - Docker Engine 24+ et le plugin Compose v2
 - Linux (VPS/cloud) pour la prod. Sous Windows : Docker Desktop avec backend WSL2 (`wsl --install` + redémarrage)
-- Deux enregistrements DNS : `app.votre-domaine` et `api.votre-domaine` pointant vers le serveur
-- Un terminaison TLS en amont (LB de l'hébergeur, nginx + certbot, Caddy…) qui proxye vers les ports 8080/8081 en transmettant `X-Forwarded-Proto` et `Host`
+- Un enregistrement DNS pour `dev.topscolaire.com` pointant vers le serveur
+- Une terminaison TLS sur le serveur (Nginx + certbot, Caddy…) qui proxye vers `127.0.0.1:8080`
+- Le reverse proxy public doit définir lui-même `Host`, `X-Forwarded-Proto` et `X-Forwarded-For` (par exemple `proxy_set_header X-Forwarded-For $remote_addr;`) et ne pas relayer les valeurs fournies par le client. Le Nginx frontend n'accepte que `http`/`https` pour le protocole transmis, puis les transmet à Laravel.
+
+Exemple de bloc de proxy Nginx sur l'hôte pour le domaine de préproduction
+(les certificats TLS sont configurés séparément) :
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name dev.topscolaire.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Port $server_port;
+    }
+}
+```
 
 ## Fichiers Docker
 
@@ -58,12 +81,13 @@ docker-compose.yml                     # Stack complète (8 services + adminer e
 docker/
   api/
     Dockerfile                         # 3 stages : composer → assets Vite → php:8.4-fpm
-    entrypoint.sh                      # Attend DB/Redis, storage:link, caches Laravel
+    entrypoint.sh                      # Attend DB/Redis (borné), permissions et caches Laravel
     zz-app.ini                         # opcache production, uploads 32M
     nginx.conf                         # nginx fastcgi de l'API
   frontend/
     Dockerfile                         # 2 stages : build node:22 → nginx statique
     default.conf.template              # SPA + proxy /api
+    proxy-scheme.conf                  # Normalise le protocole d'origine transmis à Laravel
 .env.production.example                # Modèle d'environnement (→ .env.production)
 .dockerignore                          # Exclut vendor, .env, docs… du contexte de build
 ```
@@ -72,6 +96,8 @@ Notes d'image :
 
 - L'image API inclut les extensions : `pdo_pgsql`, `redis` (pecl), `zip` et `gd` (Excel via maatwebsite/excel), `bcmath`, `pcntl` (workers), `opcache`.
 - Les caches Laravel (`config`, `routes`, `views`, `events`) sont générés **au démarrage** dans l'entrypoint, jamais au build : `config:cache` fige les variables d'environnement.
+- L'entrypoint limite l'attente de PostgreSQL et Redis à 30 tentatives, avec un délai de connexion et une erreur explicite à l'abandon. L'API initialise les permissions du volume `storage`; `queue` et `scheduler` attendent son healthcheck puis tournent sous `www-data`.
+- Aucun lien `public/storage` n'est créé automatiquement. Les documents privés ne doivent pas être exposés directement par Nginx ; leur téléchargement doit passer par une route Laravel autorisée.
 - `opcache.validate_timestamps=0` : le code est figé dans l'image, toute modification nécessite un rebuild.
 - Les assets Vite de la page Blade `welcome` sont construits dans l'image (stage `assets`).
 
@@ -87,16 +113,20 @@ php artisan key:generate --show   # valeur à coller dans APP_KEY
 #   Renseigner au minimum : DB_PASSWORD, APP_URL,
 #   CORS_ALLOWED_ORIGINS, APP_KEY
 
-# 2. Build et démarrage
-docker compose --env-file .env.production up -d --build
+# 2. Construire les images, puis appliquer les migrations avant le démarrage
+docker compose --env-file .env.production build
+docker compose --env-file .env.production --profile maintenance run --rm migrate
+docker compose --env-file .env.production up -d
 
 # 3. Vérification
-docker compose --env-file .env.production ps          # tous les services "healthy"
+docker compose --env-file .env.production ps          # vérifier l'état des services
 curl -s http://localhost:8081/up                      # health API : {"status":"ok"}
 curl -sI http://localhost:8080                        # frontend : 200
 ```
 
 > Le fichier `.env.production` sert deux fois : interpolation du `docker-compose.yml` (ports, identifiants DB, `VITE_API_BASE_URL`) **et** variables d'environnement injectées dans les conteneurs applicatifs (`env_file`). C'est pourquoi il faut toujours lancer Compose avec `--env-file .env.production`.
+>
+> Les migrations ne sont pas exécutées automatiquement par `up`. Il faut les lancer explicitement avant le premier démarrage et après chaque mise à jour de code qui ajoute des migrations. Sur une base contenant des données, faites d'abord une sauvegarde et vérifiez la compatibilité des migrations.
 
 ## Importer les données de dev
 
@@ -105,7 +135,7 @@ Les deux environnements sont isolés en base :
 | Environnement | Base de données | Accès |
 | --- | --- | --- |
 | Local (Herd) | PostgreSQL natif de la machine (service `postgresql-x64-18`) | `127.0.0.1:5432` (voir `DB_PORT` dans `.env`) |
-| Docker | service `db` de `docker-compose.yml` (conteneur `bulletinlab-db-1`) | réseau interne `backend`, port non publié |
+| Docker | service `db` de `docker-compose.yml` (conteneur `topscolaire-db-1`) | réseau interne `backend`, port non publié |
 
 Même moteur et même version majeure : l'import est un simple dump → restauration, sans transformation.
 
@@ -127,7 +157,7 @@ docker compose --env-file .env.production exec -T db rm /tmp/dev-dump.dump
 Notes :
 
 - `--clean --if-exists` supprime les objets existants avant de les recréer : l'import écrase proprement le schéma (et les données) de la base Docker.
-- La table `migrations` est incluse dans le dump : le service `migrate` (rejoué à chaque `up`) verra tout comme appliqué.
+- La table `migrations` est incluse dans le dump : une exécution manuelle de `migrate` verra les migrations déjà présentes comme appliquées.
 - `pg_restore` s'exécute en `trust` sur le socket local du conteneur : aucun mot de passe n'est à saisir.
 - Les tokens Sanctum (`personal_access_tokens`) sont des hash SHA-256 indépendants de `APP_KEY` : vos sessions actives côté SPA continuent de fonctionner après l'import.
 - Idéalement, importez **avant** de mettre le site en production réelle (quelques écritures de démarrage peuvent être écrasées — sans impact, sessions et cache étant sur Redis).
@@ -175,15 +205,20 @@ Référez-vous à `.env.production.example` (commenté). Les plus importantes :
 | Variable | Exemple | Commentaire |
 |---|---|---|
 | `APP_KEY` | `base64:…` | `php artisan key:generate --show` — jamais régénérée en prod |
-| `APP_URL` | `https://app.exemple.cd` | URL publique du frontend |
-| `CORS_ALLOWED_ORIGINS` | `https://app.exemple.cd` | Utile si le navigateur appelle `api.` en direct ; ignoré avec le proxy `/api` same-origin |
+| `APP_URL` | `https://dev.topscolaire.com` | URL publique de préproduction |
+| `CORS_ALLOWED_ORIGINS` | `https://dev.topscolaire.com` | Origine autorisée si l'API est appelée directement ; le proxy `/api` same-origin ne dépend pas de CORS |
+| `TRUSTED_PROXIES` | `REMOTE_ADDR` | Ne faire confiance qu'au proxy HTTP immédiat ; garder les ports Docker accessibles depuis localhost uniquement |
 | `DB_PASSWORD` | fort | Requis par Compose (le lancement échoue sinon) — identique à `DB_USERNAME` pour se connecter via Adminer/`psql` |
+| `COMPOSE_PROJECT_NAME` | `topscolaire` | Nom de la stack de production et préfixe de ses volumes Docker |
+| `IMAGE_TAG` | `local` | Tag des images API et frontend ; préférer un tag immuable (ex. SHA Git) pour un déploiement versionné |
 | `VITE_API_BASE_URL` | `/api/v1` | **Fixé au build du frontend.** `/api/v1` = proxy nginx ; `https://api.exemple.cd/v1` = appel direct |
-| `FRONTEND_HTTP_PORT` / `API_HTTP_PORT` | `8080` / `8081` | Ports exposés vers le LB |
+| `FRONTEND_HTTP_PORT` / `API_HTTP_PORT` | `8080` / `8081` | Ports bindés sur `127.0.0.1`, accessibles au proxy local ou via tunnel SSH |
 | `ADMINER_HTTP_PORT` | `8082` | Console Adminer, bindée sur 127.0.0.1 (voir `Commandes courantes`) |
 | `LOG_CHANNEL` | `stderr` | Logs dans `docker logs` au lieu de fichiers |
 
 > `VITE_API_BASE_URL` est bake-in au build : changez-la ⇒ rebuild du frontend (`docker compose --env-file .env.production build frontend`).
+>
+> `TRUSTED_PROXIES=REMOTE_ADDR` fait confiance uniquement à l'adresse immédiate transmise par FastCGI. Le reverse proxy public doit écraser les en-têtes `X-Forwarded-*` venant du client ; les ports publiés par Docker restent bindés à `127.0.0.1`.
 
 ## Commandes courantes
 
@@ -200,7 +235,14 @@ $COMPOSE restart frontend       # Redémarrage sans rebuild
 $COMPOSE down                   # Arrêt (les volumes sont conservés)
 ```
 
-Dépannage migrations : `$COMPOSE run --rm migrate php artisan migrate:status`
+Migrations et dépannage :
+
+```bash
+$COMPOSE --profile maintenance run --rm migrate
+$COMPOSE --profile maintenance run --rm migrate php artisan migrate:status
+```
+
+Après une mise à jour qui modifie le schéma, exécutez d'abord la commande de migration, puis `up -d --build` pour démarrer / mettre à jour les services applicatifs. Les migrations incompatibles avec l'ancienne version de l'application nécessitent une stratégie de déploiement dédiée.
 
 ### Consulter la base (Adminer)
 
@@ -222,20 +264,20 @@ Puis ouvrir **`http://127.0.0.1:8082/?pgsql=db`** — ce lien met le pilote sur 
 
 ## Sauvegarde & restauration
 
-Les données vivent dans 3 volumes nommés : `pg_data` (PostgreSQL), `redis_data` (Redis, reconstructible), `api_storage` (fichiers Laravel). L'ancien volume MySQL `db_data` subsiste tant que vous ne le supprimez pas (`docker volume rm bulletinlab_db_data`).
+Les données vivent dans 3 volumes nommés : `topscolaire_pg_data` (PostgreSQL), `topscolaire_redis_data` (Redis, reconstructible), `topscolaire_api_storage` (fichiers Laravel). L'ancien volume MySQL `db_data` subsiste tant que vous ne le supprimez pas (`docker volume rm bulletinlab_db_data`).
 
 ```bash
 COMPOSE="docker compose --env-file .env.production"
 
 # Sauvegarde quotidienne (cron) — socket local en `trust`, pas de mot de passe
-docker exec bulletinlab-db-1 pg_dump -U bulletinlab -d bulletinlab --no-owner \
+docker exec topscolaire-db-1 pg_dump -U bulletinlab -d bulletinlab --no-owner \
   | gzip > backup-$(date +%F).sql.gz
-docker run --rm -v bulletinlab_api_storage:/data -v "$PWD":/backup alpine \
+docker run --rm -v topscolaire_api_storage:/data -v "$PWD":/backup alpine \
   tar czf /backup/storage-$(date +%F).tar.gz -C /data .
 
 # Restauration
 gunzip -c backup-2026-10-18.sql.gz | \
-  docker exec -i bulletinlab-db-1 psql -v ON_ERROR_STOP=1 -U bulletinlab -d bulletinlab
+  docker exec -i topscolaire-db-1 psql -v ON_ERROR_STOP=1 -U bulletinlab -d bulletinlab
 ```
 
 Adapter le nom du conteneur DB selon `docker compose ps` (suffixe `-1` si pas de `container_name`). Testez la restauration de temps en temps — une sauvegarde non testée n'est pas une sauvegarde.
@@ -244,12 +286,16 @@ Adapter le nom du conteneur DB selon `docker compose ps` (suffixe `-1` si pas de
 
 ```bash
 git pull
-docker compose --env-file .env.production up -d --build
+docker compose --env-file .env.production build
+docker compose --env-file .env.production --profile maintenance run --rm migrate
+docker compose --env-file .env.production up -d
 ```
 
-- Le service `migrate` rejoue `migrate --force` à chaque `up` (idempotent).
+- Les migrations sont manuelles : sauvegardez les données puis exécutez le service `migrate` avant de redémarrer les services applicatifs.
 - Les nouvelles valeurs de `.env.production` sont appliquées au redémarrage (l'entrypoint régénère les caches).
 - `up -d --build` recrée les conteneurs seulement si l'image a changé (uptime quasi continu). Pour un rollout strictement sans interruption : `$COMPOSE build` puis `$COMPOSE up -d` service par service.
+
+> La production utilise `COMPOSE_PROJECT_NAME=topscolaire`. Si vous aviez déjà déployé la stack sous le nom `bulletinlab`, ce changement crée de nouveaux conteneurs et volumes (`topscolaire_*`) ; les anciens volumes (`bulletinlab_*`) restent intacts, mais ne sont pas réutilisés automatiquement. Sauvegardez puis restaurez explicitement les données nécessaires avant de basculer.
 
 ## Dépannage
 
