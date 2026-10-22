@@ -60,7 +60,7 @@ test('demo admin seeding is forbidden in production', function () {
     app()->instance('env', 'production');
 
     try {
-        expect(fn () => $this->seed(TenantAdminDemoSeeder::class))->toThrow(LogicException::class);
+        expect(fn () => app(TenantAdminDemoSeeder::class)->run())->toThrow(LogicException::class);
     } finally {
         app()->instance('env', $originalEnvironment);
     }
