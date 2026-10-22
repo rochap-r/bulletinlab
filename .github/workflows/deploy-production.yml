@@ -19,11 +19,11 @@ concurrency:
 jobs:
   verify:
     name: Verify Laravel backend
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - name: Checkout backend
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure PHP
         uses: shivammathur/setup-php@v2
@@ -33,7 +33,7 @@ jobs:
           coverage: none
 
       - name: Configure Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: npm
@@ -67,14 +67,14 @@ jobs:
     name: Deploy production
     if: github.event_name != 'pull_request'
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment:
       name: production
       url: https://topscolaire.com
     steps:
       - name: Checkout deployment script
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Configure SSH
         env:

@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class CalculationRule extends Model
 {
     protected $table = 'calculation_rules';
+
     protected $guarded = [];
 
     protected $casts = [
