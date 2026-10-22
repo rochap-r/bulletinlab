@@ -56,11 +56,13 @@ test('demo admin seeding preserves the password and other roles while remaining 
 });
 
 test('demo admin seeding is forbidden in production', function () {
-    app()->detectEnvironment(fn (): string => 'production');
+    $originalEnvironment = app()->environment();
+    app()->instance('env', 'production');
+
     try {
         expect(fn () => $this->seed(TenantAdminDemoSeeder::class))->toThrow(LogicException::class);
     } finally {
-        app()->detectEnvironment(fn (): string => 'testing');
+        app()->instance('env', $originalEnvironment);
     }
 });
 
