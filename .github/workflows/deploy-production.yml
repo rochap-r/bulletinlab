@@ -1,0 +1,101 @@
+name: Deploy TopScolaire production
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: topscolaire-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Laravel backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Configure PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: bcmath, dom, fileinfo, gd, mbstring, pcntl, pdo_sqlite, sqlite3, zip
+          coverage: none
+
+      - name: Configure Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install PHP dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare test environment
+        run: |
+          cp .env.example .env
+          php artisan key:generate --force
+
+      - name: Validate Composer metadata
+        run: composer validate --strict
+
+      - name: Audit PHP dependencies
+        run: composer audit --locked --no-interaction
+
+      - name: Check PHP formatting
+        run: vendor/bin/pint --test
+
+      - name: Run Laravel tests
+        run: php artisan test --compact
+
+      - name: Build Laravel assets
+        run: |
+          npm ci
+          npm run build
+
+  deploy:
+    name: Deploy production
+    if: github.event_name != 'pull_request'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://topscolaire.com
+    steps:
+      - name: Checkout deployment script
+        uses: actions/checkout@v4
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TOPSCOLAIRE_PROD_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.TOPSCOLAIRE_PROD_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/topscolaire"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/topscolaire" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/topscolaire" >/dev/null
+
+      - name: Deploy latest backend and frontend main branches
+        env:
+          SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
+          SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
+        run: |
+          ssh \
+            -i "$HOME/.ssh/topscolaire" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            "$SSH_USER@$SSH_HOST" \
+            'bash -s' < deploy/production-deploy.sh
