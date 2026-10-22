@@ -1,5 +1,8 @@
 # Déploiement de TopScolaire en production
 
+> Pour la configuration et l'exploitation détaillées de GitHub Actions,
+> consulter [`CI_CD_TOPSCOLAIRE.md`](CI_CD_TOPSCOLAIRE.md).
+
 Ce document décrit le premier déploiement de TopScolaire sur un VPS Ubuntu avec Docker Compose, Nginx et Let's Encrypt.
 
 Il correspond à l'architecture réellement utilisée en production :

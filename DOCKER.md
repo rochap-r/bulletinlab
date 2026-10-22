@@ -3,6 +3,8 @@
 Stack de production conteneurisée : API Laravel (PHP 8.4-FPM + nginx), SPA React (nginx), PostgreSQL 18 et Redis.
 
 > Pour la procédure complète réellement appliquée au VPS de production de TopScolaire, consulter [DEPLOIEMENT_PRODUCTION_TOPSCOLAIRE.md](DEPLOIEMENT_PRODUCTION_TOPSCOLAIRE.md).
+>
+> Pour la configuration GitHub Actions, les secrets, le fonctionnement quotidien et le dépannage CI/CD, consulter [CI_CD_TOPSCOLAIRE.md](CI_CD_TOPSCOLAIRE.md).
 
 ## Sommaire
 
