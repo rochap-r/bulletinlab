@@ -1,6 +1,12 @@
 <?php
 
+use App\Models\Etablissement;
+use App\Models\Role;
+use App\Models\Tenant;
+use App\Models\Utilisateur;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 /*
@@ -44,7 +50,41 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+function createTenantForDirectUsers(string $slug): Tenant
 {
-    // ..
+    return Tenant::query()->create([
+        'uuid' => (string) Str::uuid(),
+        'nom_espace' => Str::headline($slug),
+        'slug' => $slug,
+        'type_tenant' => 'GROUPE_ECOLES',
+        'statut' => 'ACTIF',
+    ]);
+}
+
+function globalRoleForDirectUsers(string $code): Role
+{
+    return Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => $code],
+        ['nom' => Str::headline($code), 'system_role' => true],
+    );
+}
+
+function userForDirectUsers(Tenant $tenant, string $role, ?Etablissement $etablissement = null): Utilisateur
+{
+    $user = Utilisateur::query()->create([
+        'tenant_id' => $tenant->id,
+        'etablissement_id' => $etablissement?->id,
+        'nom' => 'Acteur',
+        'telephone' => '+243'.random_int(100000000, 999999999),
+        'mot_de_passe' => Hash::make('secret-password'),
+        'actif' => true,
+    ]);
+    $user->roles()->attach(globalRoleForDirectUsers($role));
+
+    return $user;
+}
+
+function tokenForDirectUsers(Utilisateur $user): string
+{
+    return $user->createToken('direct-users', ["tenant:{$user->tenant_id}"])->plainTextToken;
 }
