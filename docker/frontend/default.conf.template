@@ -23,7 +23,17 @@ server {
     }
 
     location = /index.html {
-        add_header Cache-Control "no-cache";
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # Le shell et le service worker doivent toujours être revalidés afin que
+    # chaque déploiement soit détecté sans vider le cache du navigateur.
+    location = /sw.js {
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    location = /manifest.webmanifest {
+        add_header Cache-Control "no-cache, must-revalidate";
     }
 
     # Proxy API (same-origin). proxy_pass sans URI → le chemin /api/v1/...

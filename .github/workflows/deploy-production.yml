@@ -8,6 +8,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      frontend_sha:
+        description: Exact frontend commit to deploy (set by the frontend CI)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -89,13 +94,26 @@ jobs:
 
       - name: Deploy latest backend and frontend main branches
         env:
+          EXPECTED_BACKEND_SHA: ${{ github.sha }}
+          EXPECTED_FRONTEND_SHA: ${{ inputs.frontend_sha }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
         run: |
+          if [[ ! "$EXPECTED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid backend SHA." >&2
+            exit 1
+          fi
+
+          if [[ -n "$EXPECTED_FRONTEND_SHA" && ! "$EXPECTED_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid frontend SHA." >&2
+            exit 1
+          fi
+
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$SSH_USER@$SSH_HOST" \
-            'bash -s' < deploy/production-deploy.sh
+            "EXPECTED_BACKEND_SHA=$EXPECTED_BACKEND_SHA EXPECTED_FRONTEND_SHA=$EXPECTED_FRONTEND_SHA bash -s" \
+            < deploy/production-deploy.sh
