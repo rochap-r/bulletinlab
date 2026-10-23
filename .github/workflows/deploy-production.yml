@@ -303,40 +303,51 @@ jobs:
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
           NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
+          # Write rollback script to temp file to avoid heredoc issues in YAML
+          cat > /tmp/rollback.sh << 'SCRIPT_EOF'
+          set -Eeuo pipefail
+
+          cd /opt/topscolaire
+
+          # Find previous image tag (excluding current)
+          CURRENT_TAG=$(docker compose --env-file .env.production images --format '{{.Tag}}' frontend | head -1)
+          PREVIOUS_TAG=$(docker images --format '{{.Repository}}:{{.Tag}}' \
+            | grep '^bulletinlab/frontend:' \
+            | grep -v "^bulletinlab/frontend:${CURRENT_TAG}$" \
+            | head -1)
+
+          if [[ -z "$PREVIOUS_TAG" ]]; then
+            echo "No previous image found for rollback"
+            exit 1
+          fi
+
+          echo "Rolling back to: $PREVIOUS_TAG"
+
+          # Deploy previous version
+          export IMAGE_TAG="$PREVIOUS_TAG"
+          docker compose --env-file .env.production up -d --wait --wait-timeout 180
+          docker compose --env-file .env.production up -d --wait --wait-timeout 120 --force-recreate --no-deps frontend
+
+          # Verify
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
+            http://127.0.0.1:8081/up | grep -q "Application up"
+          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
+            --output /dev/null http://127.0.0.1:8080/
+
+          echo "Rollback completed successfully"
+          SCRIPT_EOF
+
+          # Copy and execute on VPS
+          scp -i "$HOME/.ssh/topscolaire" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            /tmp/rollback.sh "$SSH_USER@$SSH_HOST:/tmp/rollback.sh"
+
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$SSH_USER@$SSH_HOST" \
-            "NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK bash -s" << 'EOF'
-set -Eeuo pipefail
-
-cd /opt/topscolaire
-
-# Find previous image tag (excluding current)
-PREVIOUS_TAG=$(docker images --format '{{.Repository}}:{{.Tag}}' \
-  | grep '^bulletinlab/frontend:' \
-  | grep -v "$(docker compose --env-file .env.production images --format '{{.Tag}}' frontend | head -1)" \
-  | head -1)
-
-if [[ -z "$PREVIOUS_TAG" ]]; then
-  echo "No previous image found for rollback"
-  exit 1
-fi
-
-echo "Rolling back to: $PREVIOUS_TAG"
-
-# Deploy previous version
-export IMAGE_TAG="$PREVIOUS_TAG"
-docker compose --env-file .env.production up -d --wait --wait-timeout 180
-docker compose --env-file .env.production up -d --wait --wait-timeout 120 --force-recreate --no-deps frontend
-
-# Verify
-curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
-  http://127.0.0.1:8081/up | grep -q "Application up"
-curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
-  --output /dev/null http://127.0.0.1:8080/
-
-echo "Rollback completed successfully"
-EOF
+            "NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK bash /tmp/rollback.sh"
