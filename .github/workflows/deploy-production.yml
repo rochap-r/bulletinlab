@@ -24,8 +24,9 @@ on:
 
 permissions:
   contents: read
-  id-token: write  # For OIDC if using cloud providers
-  attestations: write  # For build provenance
+  id-token: write
+  attestations: write
+  security-events: write  # For Trivy SARIF upload
 
 concurrency:
   group: topscolaire-production
@@ -100,6 +101,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Create minimal .env for Docker build
+        run: |
+          cat > .env.production << 'EOF'
+          COMPOSE_PROJECT_NAME=topscolaire
+          IMAGE_TAG=scan
+          APP_NAME=TopScolaire
+          APP_ENV=production
+          APP_KEY=base64:dummykeyfordockerscanonlydummykeyfordockerscanonly==
+          APP_DEBUG=false
+          APP_URL=https://topscolaire.com
+          DB_CONNECTION=pgsql
+          DB_HOST=db
+          DB_PORT=5432
+          DB_DATABASE=topscolaire
+          DB_USERNAME=topscolaire
+          DB_PASSWORD=dummypassword
+          CACHE_STORE=redis
+          SESSION_DRIVER=redis
+          QUEUE_CONNECTION=redis
+          REDIS_HOST=redis
+          REDIS_PASSWORD=dummypassword
+          REDIS_PORT=6379
+          MAIL_MAILER=log
+          FRONTEND_HTTP_PORT=8080
+          API_HTTP_PORT=8081
+          VITE_API_BASE_URL=/api/v1
+          EOF
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -119,7 +148,7 @@ jobs:
 
       - name: Upload Trivy results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
           category: 'docker-image-scan'
