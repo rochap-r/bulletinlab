@@ -1,11 +1,11 @@
 <?php
 
 use App\Models\Etablissement;
-use App\Models\Role;
-use App\Models\Tenant;
 use App\Models\Utilisateur;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 

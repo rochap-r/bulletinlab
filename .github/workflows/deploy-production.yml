@@ -11,46 +11,32 @@ on:
         description: Exact frontend commit to deploy (set by frontend CI)
         required: false
         type: string
-      skip_verification:
-        description: Skip frontend release verification (emergency only)
-        required: false
-        type: boolean
-        default: false
       rollback:
-        description: Rollback to previous deployment
+        description: Roll back to a previously built image
         required: false
         type: boolean
         default: false
+      rollback_image_tag:
+        description: Optional IMAGE_TAG to restore; empty selects the previous image
+        required: false
+        type: string
 
 permissions:
   contents: read
-  id-token: write
-  attestations: write
-  security-events: write  # For Trivy SARIF upload
 
 concurrency:
   group: topscolaire-production
   cancel-in-progress: false
 
-env:
-  # Default environment variables for deployment
-  DEPLOY_TIMEOUT: 1800
-  ROLLBACK_ON_FAILURE: true
-  # NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}  # Uncomment when configured
-
 jobs:
   verify:
     name: Verify Laravel backend
+    if: ${{ !inputs.rollback }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    outputs:
-      backend_sha: ${{ steps.checkout.outputs.sha }}
     steps:
       - name: Checkout backend
-        id: checkout
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0  # Need full history for merge-base checks
 
       - name: Configure PHP
         uses: shivammathur/setup-php@v2
@@ -84,7 +70,7 @@ jobs:
         run: vendor/bin/pint --test
 
       - name: Run Laravel tests
-        run: php artisan test --compact --parallel
+        run: php artisan test --compact
 
       - name: Build Laravel assets
         run: |
@@ -92,18 +78,32 @@ jobs:
           npm run build
 
   docker-scan:
-    name: Scan Docker images for vulnerabilities
-    needs: [verify]
-    if: github.event_name != 'pull_request'
+    name: Scan ${{ matrix.service }} image
+    if: ${{ github.event_name != 'pull_request' && !inputs.rollback }}
+    needs: verify
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, frontend]
     steps:
-      - name: Checkout
+      - name: Checkout backend
         uses: actions/checkout@v7
 
-      - name: Create minimal .env for Docker build
+      - name: Checkout frontend
+        uses: actions/checkout@v7
+        with:
+          repository: rochap-r/bulletinlabfrontend
+          ref: ${{ inputs.frontend_sha || 'main' }}
+          path: frontend
+
+      - name: Create isolated Docker build environment
         run: |
-          cat > .env.production << 'EOF'
+          cat > .env.production <<'EOF'
           COMPOSE_PROJECT_NAME=topscolaire
           IMAGE_TAG=scan
           APP_NAME=TopScolaire
@@ -121,42 +121,41 @@ jobs:
           SESSION_DRIVER=redis
           QUEUE_CONNECTION=redis
           REDIS_HOST=redis
-          REDIS_PASSWORD=dummypassword
+          REDIS_PASSWORD=null
           REDIS_PORT=6379
           MAIL_MAILER=log
           FRONTEND_HTTP_PORT=8080
           API_HTTP_PORT=8081
+          ADMINER_HTTP_PORT=8082
           VITE_API_BASE_URL=/api/v1
           EOF
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Build ${{ matrix.service }} image
+        run: docker compose --env-file .env.production build --pull ${{ matrix.service }}
 
-      - name: Build images for scanning
-        run: |
-          docker compose -f docker-compose.yml build --pull
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+      - name: Scan ${{ matrix.service }} image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
-          scan-type: 'image'
-          scan-ref: 'bulletinlab/api:latest bulletinlab/frontend:latest'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+          scan-type: image
+          scan-ref: bulletinlab/${{ matrix.service }}:scan
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
+          exit-code: '1'
 
-      - name: Upload Trivy results to GitHub Security
-        uses: github/codeql-action/upload-sarif@v3
-        if: always() && hashFiles('trivy-results.sarif') != ''
+      - name: Upload ${{ matrix.service }} scan results
+        uses: github/codeql-action/upload-sarif@v4.39.1
+        if: ${{ always() && hashFiles(format('trivy-{0}.sarif', matrix.service)) != '' }}
+        continue-on-error: true
         with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'docker-image-scan'
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: docker-${{ matrix.service }}
 
   deploy:
     name: Deploy production
+    if: ${{ github.event_name != 'pull_request' && !inputs.rollback }}
     needs: [verify, docker-scan]
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment:
@@ -165,8 +164,6 @@ jobs:
     steps:
       - name: Checkout deployment script
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Configure SSH
         env:
@@ -180,45 +177,40 @@ jobs:
           ssh-keygen -y -f "$HOME/.ssh/topscolaire" >/dev/null
 
       - name: Determine frontend SHA
-        id: frontend_sha
+        id: frontend
+        env:
+          REQUESTED_FRONTEND_SHA: ${{ inputs.frontend_sha }}
         run: |
-          # Priority: workflow_dispatch input > fetch from GitHub
-          if [[ -n "${{ github.event.inputs.frontend_sha }}" ]]; then
-            echo "sha=${{ github.event.inputs.frontend_sha }}" >> $GITHUB_OUTPUT
+          if [[ -n "$REQUESTED_FRONTEND_SHA" ]]; then
+            frontend_sha="$REQUESTED_FRONTEND_SHA"
           else
-            # Fetch latest main from frontend repo
-            SHA=$(git ls-remote https://github.com/rochap-r/bulletinlabfrontend.git main | cut -f1)
-            echo "sha=$SHA" >> $GITHUB_OUTPUT
+            frontend_sha="$(git ls-remote https://github.com/rochap-r/bulletinlabfrontend.git refs/heads/main | awk '{print $1}')"
           fi
-          echo "Using frontend SHA: ${sha}"
 
-      - name: Deploy to production
-        id: deploy
+          if [[ ! "$frontend_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Unable to resolve a valid frontend SHA." >&2
+            exit 1
+          fi
+
+          echo "sha=$frontend_sha" >> "$GITHUB_OUTPUT"
+          echo "Using frontend SHA: $frontend_sha"
+
+      - name: Deploy exact backend and frontend revisions
         env:
           EXPECTED_BACKEND_SHA: ${{ github.sha }}
-          EXPECTED_FRONTEND_SHA: ${{ steps.frontend_sha.outputs.sha }}
+          EXPECTED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
-          DEPLOY_TIMEOUT: ${{ env.DEPLOY_TIMEOUT }}
-          ROLLBACK_ON_FAILURE: ${{ env.ROLLBACK_ON_FAILURE }}
-          NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SKIP_VERIFICATION: ${{ github.event.inputs.skip_verification }}
         run: |
-          # Validate SHAs
           if [[ ! "$EXPECTED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid backend SHA." >&2
             exit 1
           fi
 
-          if [[ -n "$EXPECTED_FRONTEND_SHA" && ! "$EXPECTED_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid frontend SHA." >&2
-            exit 1
-          fi
+          printf -v remote_command \
+            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q AUTO_ROLLBACK=true bash -s' \
+            "$EXPECTED_BACKEND_SHA" "$EXPECTED_FRONTEND_SHA"
 
-          echo "Deploying backend: $EXPECTED_BACKEND_SHA"
-          echo "Deploying frontend: $EXPECTED_FRONTEND_SHA"
-
-          # Stream script to VPS via SSH
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
@@ -228,31 +220,21 @@ jobs:
             -o ServerAliveInterval=30 \
             -o ServerAliveCountMax=3 \
             "$SSH_USER@$SSH_HOST" \
-            "EXPECTED_BACKEND_SHA=$EXPECTED_BACKEND_SHA EXPECTED_FRONTEND_SHA=$EXPECTED_FRONTEND_SHA DEPLOY_TIMEOUT=$DEPLOY_TIMEOUT ROLLBACK_ON_FAILURE=$ROLLBACK_ON_FAILURE NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK SKIP_VERIFICATION=$SKIP_VERIFICATION bash -s" \
-            < deploy/production-deploy.sh
+            "$remote_command" < deploy/production-deploy.sh
 
-      - name: Post-deployment verification
-        if: success()
+      - name: Record deployed revisions
         run: |
-          echo "✅ Deployment completed successfully"
           echo "Backend SHA: ${{ github.sha }}"
-          echo "Frontend SHA: ${{ steps.frontend_sha.outputs.sha }}"
-
-      - name: Notify on failure
-        if: failure()
-        run: |
-          echo "❌ Deployment failed"
-          # Additional failure handling could go here
-          # The script itself sends notifications via webhook
+          echo "Frontend SHA: ${{ steps.frontend.outputs.sha }}"
 
   rollback:
-    name: Emergency rollback
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true'
-    needs: []
+    name: Emergency image rollback
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment:
       name: production
+      url: https://topscolaire.com
     steps:
       - name: Checkout deployment script
         uses: actions/checkout@v7
@@ -268,57 +250,28 @@ jobs:
           chmod 600 "$HOME/.ssh/topscolaire" "$HOME/.ssh/known_hosts"
           ssh-keygen -y -f "$HOME/.ssh/topscolaire" >/dev/null
 
-      - name: Execute rollback on VPS
+      - name: Restore previous image pair
         env:
+          REQUESTED_IMAGE_TAG: ${{ inputs.rollback_image_tag }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
-          NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          # Write rollback script to temp file to avoid heredoc issues in YAML
-          cat > /tmp/rollback.sh << 'SCRIPT_EOF'
-          set -Eeuo pipefail
-
-          cd /opt/topscolaire
-
-          # Find previous image tag (excluding current)
-          CURRENT_TAG=$(docker compose --env-file .env.production images --format '{{.Tag}}' frontend | head -1)
-          PREVIOUS_TAG=$(docker images --format '{{.Repository}}:{{.Tag}}' \
-            | grep '^bulletinlab/frontend:' \
-            | grep -v "^bulletinlab/frontend:${CURRENT_TAG}$" \
-            | head -1)
-
-          if [[ -z "$PREVIOUS_TAG" ]]; then
-            echo "No previous image found for rollback"
+          if [[ -n "$REQUESTED_IMAGE_TAG" && ! "$REQUESTED_IMAGE_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "Invalid rollback image tag." >&2
             exit 1
           fi
 
-          echo "Rolling back to: $PREVIOUS_TAG"
-
-          # Deploy previous version
-          export IMAGE_TAG="$PREVIOUS_TAG"
-          docker compose --env-file .env.production up -d --wait --wait-timeout 180
-          docker compose --env-file .env.production up -d --wait --wait-timeout 120 --force-recreate --no-deps frontend
-
-          # Verify
-          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
-            http://127.0.0.1:8081/up | grep -q "Application up"
-          curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
-            --output /dev/null http://127.0.0.1:8080/
-
-          echo "Rollback completed successfully"
-          SCRIPT_EOF
-
-          # Copy and execute on VPS
-          scp -i "$HOME/.ssh/topscolaire" \
-            -o BatchMode=yes \
-            -o StrictHostKeyChecking=yes \
-            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
-            /tmp/rollback.sh "$SSH_USER@$SSH_HOST:/tmp/rollback.sh"
+          printf -v remote_command \
+            'ROLLBACK_ONLY=true ROLLBACK_IMAGE_TAG=%q bash -s' \
+            "$REQUESTED_IMAGE_TAG"
 
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
             "$SSH_USER@$SSH_HOST" \
-            "NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK bash /tmp/rollback.sh"
+            "$remote_command" < deploy/production-deploy.sh
