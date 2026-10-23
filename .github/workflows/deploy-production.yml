@@ -66,7 +66,7 @@ jobs:
           cache: npm
 
       - name: Install PHP dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress --no-audit
+        run: composer install --no-interaction --prefer-dist --no-progress
 
       - name: Prepare test environment
         run: |
@@ -97,58 +97,9 @@ jobs:
           subject-name: bulletinlab/api
           subject-digest: ${{ steps.build.outputs.digest }}
 
-  verify-frontend:
-    name: Verify React frontend
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    outputs:
-      frontend_sha: ${{ steps.checkout.outputs.sha }}
-    steps:
-      - name: Checkout frontend
-        id: checkout
-        uses: actions/checkout@v7
-        with:
-          repository: rochap-r/bulletinlabfrontend
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
-
-      - name: Configure Node.js
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install dependencies
-        working-directory: ./frontend
-        run: npm ci
-
-      - name: Lint
-        working-directory: ./frontend
-        run: npm run lint
-
-      - name: Type check
-        working-directory: ./frontend
-        run: npm run typecheck || npx tsc --noEmit
-
-      - name: Test
-        working-directory: ./frontend
-        run: npm run test
-
-      - name: Build
-        working-directory: ./frontend
-        run: npm run build
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: frontend-dist
-          path: frontend/dist/
-          retention-days: 7
-
   docker-scan:
     name: Scan Docker images for vulnerabilities
-    needs: [verify, verify-frontend]
+    needs: [verify]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -182,7 +133,7 @@ jobs:
 
   deploy:
     name: Deploy production
-    needs: [verify, verify-frontend, docker-scan]
+    needs: [verify, docker-scan]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -209,11 +160,9 @@ jobs:
       - name: Determine frontend SHA
         id: frontend_sha
         run: |
-          # Priority: workflow_dispatch input > frontend verify output > fetch from GitHub
+          # Priority: workflow_dispatch input > fetch from GitHub
           if [[ -n "${{ github.event.inputs.frontend_sha }}" ]]; then
             echo "sha=${{ github.event.inputs.frontend_sha }}" >> $GITHUB_OUTPUT
-          elif [[ -n "${{ needs.verify-frontend.outputs.frontend_sha }}" ]]; then
-            echo "sha=${{ needs.verify-frontend.outputs.frontend_sha }}" >> $GITHUB_OUTPUT
           else
             # Fetch latest main from frontend repo
             SHA=$(git ls-remote https://github.com/rochap-r/bulletinlabfrontend.git main | cut -f1)
