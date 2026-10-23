@@ -91,6 +91,15 @@ jobs:
       matrix:
         service: [api, frontend]
     steps:
+      - name: Validate cross-repository access
+        env:
+          FRONTEND_REPOSITORY_TOKEN: ${{ secrets.TOPSCOLAIRE_DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          if [[ -z "$FRONTEND_REPOSITORY_TOKEN" ]]; then
+            echo "Missing TOPSCOLAIRE_DEPLOY_DISPATCH_TOKEN in the backend repository secrets." >&2
+            exit 1
+          fi
+
       - name: Checkout backend
         uses: actions/checkout@v7
 
@@ -100,6 +109,8 @@ jobs:
           repository: rochap-r/bulletinlabfrontend
           ref: ${{ inputs.frontend_sha || 'main' }}
           path: frontend
+          token: ${{ secrets.TOPSCOLAIRE_DEPLOY_DISPATCH_TOKEN }}
+          persist-credentials: false
 
       - name: Create isolated Docker build environment
         run: |
@@ -180,11 +191,17 @@ jobs:
         id: frontend
         env:
           REQUESTED_FRONTEND_SHA: ${{ inputs.frontend_sha }}
+          GH_TOKEN: ${{ secrets.TOPSCOLAIRE_DEPLOY_DISPATCH_TOKEN }}
         run: |
           if [[ -n "$REQUESTED_FRONTEND_SHA" ]]; then
             frontend_sha="$REQUESTED_FRONTEND_SHA"
           else
-            frontend_sha="$(git ls-remote https://github.com/rochap-r/bulletinlabfrontend.git refs/heads/main | awk '{print $1}')"
+            if [[ -z "$GH_TOKEN" ]]; then
+              echo "Missing TOPSCOLAIRE_DEPLOY_DISPATCH_TOKEN in the backend repository secrets." >&2
+              exit 1
+            fi
+
+            frontend_sha="$(gh api repos/rochap-r/bulletinlabfrontend/commits/main --jq '.sha')"
           fi
 
           if [[ ! "$frontend_sha" =~ ^[0-9a-f]{40}$ ]]; then
