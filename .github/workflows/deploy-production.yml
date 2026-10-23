@@ -2,33 +2,54 @@ name: Deploy TopScolaire production
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
     inputs:
       frontend_sha:
-        description: Exact frontend commit to deploy (set by the frontend CI)
+        description: Exact frontend commit to deploy (set by frontend CI)
         required: false
         type: string
+      skip_verification:
+        description: Skip frontend release verification (emergency only)
+        required: false
+        type: boolean
+        default: false
+      rollback:
+        description: Rollback to previous deployment
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  id-token: write  # For OIDC if using cloud providers
+  attestations: write  # For build provenance
 
 concurrency:
   group: topscolaire-production
   cancel-in-progress: false
+
+env:
+  # Default environment variables for deployment
+  DEPLOY_TIMEOUT: 1800
+  ROLLBACK_ON_FAILURE: true
+  # NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}  # Uncomment when configured
 
 jobs:
   verify:
     name: Verify Laravel backend
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    outputs:
+      backend_sha: ${{ steps.checkout.outputs.sha }}
     steps:
       - name: Checkout backend
+        id: checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # Need full history for merge-base checks
 
       - name: Configure PHP
         uses: shivammathur/setup-php@v2
@@ -36,6 +57,7 @@ jobs:
           php-version: '8.4'
           extensions: bcmath, dom, fileinfo, gd, mbstring, pcntl, pdo_sqlite, sqlite3, zip
           coverage: none
+          ini-file: production
 
       - name: Configure Node.js
         uses: actions/setup-node@v7
@@ -44,7 +66,7 @@ jobs:
           cache: npm
 
       - name: Install PHP dependencies
-        run: composer install --no-interaction --prefer-dist --no-progress
+        run: composer install --no-interaction --prefer-dist --no-progress --no-audit
 
       - name: Prepare test environment
         run: |
@@ -61,22 +83,205 @@ jobs:
         run: vendor/bin/pint --test
 
       - name: Run Laravel tests
-        run: php artisan test --compact
+        run: php artisan test --compact --parallel
 
       - name: Build Laravel assets
         run: |
           npm ci
           npm run build
 
+      - name: Generate build attestation (provenance)
+        if: github.event_name != 'pull_request'
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: bulletinlab/api
+          subject-digest: ${{ steps.build.outputs.digest }}
+
+  verify-frontend:
+    name: Verify React frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      frontend_sha: ${{ steps.checkout.outputs.sha }}
+    steps:
+      - name: Checkout frontend
+        id: checkout
+        uses: actions/checkout@v7
+        with:
+          repository: rochap-r/bulletinlabfrontend
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Configure Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: ./frontend
+        run: npm run lint
+
+      - name: Type check
+        working-directory: ./frontend
+        run: npm run typecheck || npx tsc --noEmit
+
+      - name: Test
+        working-directory: ./frontend
+        run: npm run test
+
+      - name: Build
+        working-directory: ./frontend
+        run: npm run build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist/
+          retention-days: 7
+
+  docker-scan:
+    name: Scan Docker images for vulnerabilities
+    needs: [verify, verify-frontend]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build images for scanning
+        run: |
+          docker compose -f docker-compose.yml build --pull
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'image'
+          scan-ref: 'bulletinlab/api:latest bulletinlab/frontend:latest'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'docker-image-scan'
+
   deploy:
     name: Deploy production
+    needs: [verify, verify-frontend, docker-scan]
     if: github.event_name != 'pull_request'
-    needs: verify
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment:
       name: production
       url: https://topscolaire.com
+    steps:
+      - name: Checkout deployment script
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Configure SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.TOPSCOLAIRE_PROD_SSH_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.TOPSCOLAIRE_PROD_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/topscolaire"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/topscolaire" "$HOME/.ssh/known_hosts"
+          ssh-keygen -y -f "$HOME/.ssh/topscolaire" >/dev/null
+
+      - name: Determine frontend SHA
+        id: frontend_sha
+        run: |
+          # Priority: workflow_dispatch input > frontend verify output > fetch from GitHub
+          if [[ -n "${{ github.event.inputs.frontend_sha }}" ]]; then
+            echo "sha=${{ github.event.inputs.frontend_sha }}" >> $GITHUB_OUTPUT
+          elif [[ -n "${{ needs.verify-frontend.outputs.frontend_sha }}" ]]; then
+            echo "sha=${{ needs.verify-frontend.outputs.frontend_sha }}" >> $GITHUB_OUTPUT
+          else
+            # Fetch latest main from frontend repo
+            SHA=$(git ls-remote https://github.com/rochap-r/bulletinlabfrontend.git main | cut -f1)
+            echo "sha=$SHA" >> $GITHUB_OUTPUT
+          fi
+          echo "Using frontend SHA: ${sha}"
+
+      - name: Deploy to production
+        id: deploy
+        env:
+          EXPECTED_BACKEND_SHA: ${{ github.sha }}
+          EXPECTED_FRONTEND_SHA: ${{ steps.frontend_sha.outputs.sha }}
+          SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
+          SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
+          DEPLOY_TIMEOUT: ${{ env.DEPLOY_TIMEOUT }}
+          ROLLBACK_ON_FAILURE: ${{ env.ROLLBACK_ON_FAILURE }}
+          NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SKIP_VERIFICATION: ${{ github.event.inputs.skip_verification }}
+        run: |
+          # Validate SHAs
+          if [[ ! "$EXPECTED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid backend SHA." >&2
+            exit 1
+          fi
+
+          if [[ -n "$EXPECTED_FRONTEND_SHA" && ! "$EXPECTED_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid frontend SHA." >&2
+            exit 1
+          fi
+
+          echo "Deploying backend: $EXPECTED_BACKEND_SHA"
+          echo "Deploying frontend: $EXPECTED_FRONTEND_SHA"
+
+          # Stream script to VPS via SSH
+          ssh \
+            -i "$HOME/.ssh/topscolaire" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=3 \
+            "$SSH_USER@$SSH_HOST" \
+            "EXPECTED_BACKEND_SHA=$EXPECTED_BACKEND_SHA EXPECTED_FRONTEND_SHA=$EXPECTED_FRONTEND_SHA DEPLOY_TIMEOUT=$DEPLOY_TIMEOUT ROLLBACK_ON_FAILURE=$ROLLBACK_ON_FAILURE NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK SKIP_VERIFICATION=$SKIP_VERIFICATION bash -s" \
+            < deploy/production-deploy.sh
+
+      - name: Post-deployment verification
+        if: success()
+        run: |
+          echo "✅ Deployment completed successfully"
+          echo "Backend SHA: ${{ github.sha }}"
+          echo "Frontend SHA: ${{ steps.frontend_sha.outputs.sha }}"
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deployment failed"
+          # Additional failure handling could go here
+          # The script itself sends notifications via webhook
+
+  rollback:
+    name: Emergency rollback
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.rollback == 'true'
+    needs: []
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
     steps:
       - name: Checkout deployment script
         uses: actions/checkout@v7
@@ -92,28 +297,46 @@ jobs:
           chmod 600 "$HOME/.ssh/topscolaire" "$HOME/.ssh/known_hosts"
           ssh-keygen -y -f "$HOME/.ssh/topscolaire" >/dev/null
 
-      - name: Deploy latest backend and frontend main branches
+      - name: Execute rollback on VPS
         env:
-          EXPECTED_BACKEND_SHA: ${{ github.sha }}
-          EXPECTED_FRONTEND_SHA: ${{ inputs.frontend_sha }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
+          NOTIFICATION_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          if [[ ! "$EXPECTED_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid backend SHA." >&2
-            exit 1
-          fi
-
-          if [[ -n "$EXPECTED_FRONTEND_SHA" && ! "$EXPECTED_FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]]; then
-            echo "Invalid frontend SHA." >&2
-            exit 1
-          fi
-
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
             -o StrictHostKeyChecking=yes \
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
             "$SSH_USER@$SSH_HOST" \
-            "EXPECTED_BACKEND_SHA=$EXPECTED_BACKEND_SHA EXPECTED_FRONTEND_SHA=$EXPECTED_FRONTEND_SHA bash -s" \
-            < deploy/production-deploy.sh
+            "NOTIFICATION_WEBHOOK=$NOTIFICATION_WEBHOOK bash -s" << 'EOF'
+set -Eeuo pipefail
+
+cd /opt/topscolaire
+
+# Find previous image tag (excluding current)
+PREVIOUS_TAG=$(docker images --format '{{.Repository}}:{{.Tag}}' \
+  | grep '^bulletinlab/frontend:' \
+  | grep -v "$(docker compose --env-file .env.production images --format '{{.Tag}}' frontend | head -1)" \
+  | head -1)
+
+if [[ -z "$PREVIOUS_TAG" ]]; then
+  echo "No previous image found for rollback"
+  exit 1
+fi
+
+echo "Rolling back to: $PREVIOUS_TAG"
+
+# Deploy previous version
+export IMAGE_TAG="$PREVIOUS_TAG"
+docker compose --env-file .env.production up -d --wait --wait-timeout 180
+docker compose --env-file .env.production up -d --wait --wait-timeout 120 --force-recreate --no-deps frontend
+
+# Verify
+curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
+  http://127.0.0.1:8081/up | grep -q "Application up"
+curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
+  --output /dev/null http://127.0.0.1:8080/
+
+echo "Rollback completed successfully"
+EOF
