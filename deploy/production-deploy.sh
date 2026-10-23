@@ -102,8 +102,9 @@ trap 'if [[ -n "${BACKUP_TEMP:-}" ]]; then rm -f -- "$BACKUP_TEMP"; fi' EXIT
 
 echo "[deploy] Sauvegarde PostgreSQL avant les migrations..."
 # Attendre que PostgreSQL soit vraiment prêt pour pg_dump (healthcheck ≠ ready pour dump)
+# Les variables POSTGRES_USER/DB doivent être évaluées DANS le container
 for i in {1..10}; do
-    if "${COMPOSE[@]}" exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+    if "${COMPOSE[@]}" exec -T db sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
         break
     fi
     echo "[deploy] Attente PostgreSQL ready pour pg_dump (essai $i/10)..."
