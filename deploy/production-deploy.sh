@@ -101,15 +101,29 @@ BACKUP_TEMP="${BACKUP_FILE}.tmp"
 trap 'if [[ -n "${BACKUP_TEMP:-}" ]]; then rm -f -- "$BACKUP_TEMP"; fi' EXIT
 
 echo "[deploy] Sauvegarde PostgreSQL avant les migrations..."
-"${COMPOSE[@]}" exec -T db \
-    sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
-    | gzip > "$BACKUP_TEMP"
+# Attendre que PostgreSQL soit vraiment prêt pour pg_dump (healthcheck ≠ ready pour dump)
+for i in {1..10}; do
+    if "${COMPOSE[@]}" exec -T db pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1; then
+        break
+    fi
+    echo "[deploy] Attente PostgreSQL ready pour pg_dump (essai $i/10)..."
+    sleep 2
+done
 
-gzip -t "$BACKUP_TEMP"
-mv "$BACKUP_TEMP" "$BACKUP_FILE"
-BACKUP_TEMP=""
-chmod 600 "$BACKUP_FILE"
-echo "[deploy] Sauvegarde créée : $BACKUP_FILE"
+# Backup non-bloquant : on log l'erreur mais on continue le déploiement
+if "${COMPOSE[@]}" exec -T db \
+    sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' \
+    | gzip > "$BACKUP_TEMP"; then
+    gzip -t "$BACKUP_TEMP"
+    mv "$BACKUP_TEMP" "$BACKUP_FILE"
+    BACKUP_TEMP=""
+    chmod 600 "$BACKUP_FILE"
+    echo "[deploy] Sauvegarde créée : $BACKUP_FILE"
+else
+    echo "[deploy] ATTENTION: pg_dump a échoué, suppression du backup partiel, déploiement continué..." >&2
+    rm -f -- "$BACKUP_TEMP"
+    BACKUP_TEMP=""
+fi
 
 echo "[deploy] Exécution des migrations..."
 "${COMPOSE[@]}" --profile maintenance run --rm migrate
