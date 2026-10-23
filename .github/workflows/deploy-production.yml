@@ -90,13 +90,6 @@ jobs:
           npm ci
           npm run build
 
-      - name: Generate build attestation (provenance)
-        if: github.event_name != 'pull_request'
-        uses: actions/attest-build-provenance@v2
-        with:
-          subject-name: bulletinlab/api
-          subject-digest: ${{ steps.build.outputs.digest }}
-
   docker-scan:
     name: Scan Docker images for vulnerabilities
     needs: [verify]
