@@ -124,6 +124,138 @@ test('titular nominations save atomically and never alter course assignments', f
     $this->withToken($token)->putJson('/api/v1/titulariats', $payload)->assertConflict();
 });
 
+test('one teacher cannot hold two active class titular assignments in the same school year', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TITULAR-UNIQUE');
+    $teacher = createCourseAssignmentTeacher($scope, 'TITULAR-UNIQUE');
+    $secondClass = $scope['class']->replicate(['public_id']);
+    $secondClass->nom = '4e primaire B';
+    $secondClass->save();
+
+    $this->withToken(academicMutationToken($scope))->putJson('/api/v1/titulariats', [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [
+            ['classe_id' => $scope['class']->id, 'titulaire_id' => $teacher->id],
+            ['classe_id' => $secondClass->id, 'titulaire_id' => $teacher->id],
+        ],
+    ])->assertConflict()
+        ->assertJsonPath(
+            'detail',
+            'Cet enseignant est déjà titulaire de la classe « '.$scope['class']->nom.' » pour cette année scolaire.',
+        );
+
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and($secondClass->refresh()->titulaire_id)->toBeNull()
+        ->and(TitulaireClasse::query()->where('actif', true)->count())->toBe(0)
+        ->and(DB::table('audit_logs')->where('action', 'TITULARIAT_CLASSE_ENREGISTRE')->count())->toBe(0);
+});
+
+test('a primary titular automatically receives every class course and manual course assignment is unavailable', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'PRIMARY-TITULAR');
+    $scope['establishment']->update(['type_etablissement' => 'PRIMAIRE']);
+    $secondCourse = ModeleNode::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'type_node' => 'MATIERE',
+        'libelle' => 'Deuxième cours primaire',
+        'ordre' => 2,
+        'afficher_ligne' => true,
+        'calculer_sous_total' => false,
+        'obligatoire' => true,
+    ]);
+    ModeleMaximum::query()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'modele_bulletin_id' => $scope['model']->id,
+        'node_id' => $secondCourse->id,
+        'periode_id' => $scope['period']->id,
+        'maxima' => 20,
+        'coefficient' => 1,
+    ]);
+    $titular = createCourseAssignmentTeacher($scope, 'PRIMARY-TITULAR');
+    $replacement = createCourseAssignmentTeacher($scope, 'PRIMARY-REPLACEMENT');
+    $token = academicMutationToken($scope);
+    $titularUri = "/api/v1/classes/{$scope['class']->id}/titulariat";
+
+    $this->withToken($token)
+        ->putJson($titularUri, ['titulaire_id' => $titular->id])
+        ->assertOk();
+
+    expect(
+        AttributionCours::query()
+            ->where('classe_id', $scope['class']->id)
+            ->where('enseignant_id', $titular->id)
+            ->where('actif', true)
+            ->count(),
+    )->toBe(2)
+        ->and(
+            AttributionCours::query()
+                ->where('classe_id', $scope['class']->id)
+                ->where('actif', true)
+                ->where('enseignant_id', '!=', $titular->id)
+                ->exists(),
+        )->toBeFalse();
+
+    $this->withToken($token)
+        ->putJson(
+            "/api/v1/classes/{$scope['class']->id}/cours/{$scope['node']->id}/attribution",
+            ['enseignant_id' => $replacement->id],
+        )
+        ->assertConflict()
+        ->assertJsonPath(
+            'detail',
+            'Au primaire, tous les cours sont automatiquement confiés au titulaire de la classe.',
+        );
+    $this->withToken($token)
+        ->getJson("/api/v1/classes/{$scope['class']->id}/attributions-excel/modele")
+        ->assertConflict();
+    $this->withToken($token)
+        ->putJson("/api/v1/classes/{$scope['class']->id}/equipe-pedagogique", [
+            'titulaire_id' => $replacement->id,
+            'cours' => [['node_id' => $scope['node']->id, 'enseignant_id' => $replacement->id]],
+        ])
+        ->assertConflict();
+
+    $this->withToken($token)
+        ->putJson($titularUri, ['titulaire_id' => $replacement->id])
+        ->assertOk();
+
+    expect(
+        AttributionCours::query()
+            ->where('classe_id', $scope['class']->id)
+            ->where('enseignant_id', $replacement->id)
+            ->where('actif', true)
+            ->count(),
+    )->toBe(2)
+        ->and(
+            AttributionCours::query()
+                ->where('classe_id', $scope['class']->id)
+                ->where('enseignant_id', $titular->id)
+                ->where('actif', true)
+                ->exists(),
+        )->toBeFalse();
+});
+
+test('a primary titular can be removed through the batch titular endpoint', function () {
+    $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'PRIMARY-UNTITULAR');
+    $scope['establishment']->update(['type_etablissement' => 'PRIMAIRE']);
+    $titular = createCourseAssignmentTeacher($scope, 'PRIMARY-UNTITULAR');
+    $token = academicMutationToken($scope);
+    $url = '/api/v1/titulariats';
+
+    $this->withToken($token)->putJson($url, [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [['classe_id' => $scope['class']->id, 'titulaire_id' => $titular->id]],
+    ])->assertOk();
+
+    $this->withToken($token)->putJson($url, [
+        'annee_scolaire_id' => $scope['year']->id,
+        'titulariats' => [['classe_id' => $scope['class']->id, 'titulaire_id' => null]],
+    ])->assertOk()->assertJsonPath('data.0.titulaire_id', null);
+
+    expect($scope['class']->refresh()->titulaire_id)->toBeNull()
+        ->and(TitulaireClasse::query()->where('utilisateur_id', $titular->id)->where('actif', true)->exists())->toBeFalse()
+        ->and(AttributionCours::query()->where('classe_id', $scope['class']->id)->where('actif', true)->exists())->toBeFalse();
+});
+
 test('titular nominations revalidate an unchanged teacher before saving any class', function (string $defect) {
     $scope = createAcademicMutationScope(createAcademicMutationCatalog(), 'TITULAR-REVALIDATE');
     $teacher = createCourseAssignmentTeacher($scope, 'TITULAR-REVALIDATE');
@@ -3003,6 +3135,12 @@ test('school resources are paginated and hidden across establishments', function
     $scope = createAcademicMutationScope($catalog, 'A');
     $foreignScope = createAcademicMutationScope($catalog, 'B', $scope['tenant']);
     $token = academicMutationToken($scope);
+    $inactiveStudent = Eleve::withoutGlobalScopes()->create([
+        'tenant_id' => $scope['tenant']->id,
+        'etablissement_id' => $scope['establishment']->id,
+        'nom' => 'Élève inactif',
+        'actif' => false,
+    ]);
 
     $this->withToken($token)
         ->getJson('/api/v1/classes?per_page=1')
@@ -3014,7 +3152,21 @@ test('school resources are paginated and hidden across establishments', function
         ->getJson('/api/v1/eleves?per_page=1')
         ->assertSuccessful()
         ->assertJsonCount(1, 'data')
+        ->assertJsonPath('meta.total', 2)
         ->assertJsonMissing(['tenant_id' => $scope['tenant']->id]);
+
+    $this->withToken($token)
+        ->getJson('/api/v1/eleves?actif=0')
+        ->assertSuccessful()
+        ->assertJsonCount(1, 'data')
+        ->assertJsonPath('data.0.id', $inactiveStudent->id)
+        ->assertJsonPath('data.0.classe', null);
+
+    $this->withToken($token)
+        ->getJson('/api/v1/eleves?actif=1')
+        ->assertSuccessful()
+        ->assertJsonPath('data.0.classe.id', $scope['class']->id)
+        ->assertJsonPath('data.0.classe.nom', $scope['class']->nom);
 
     $this->withToken($token)
         ->getJson("/api/v1/classes/{$scope['class']->id}/inscriptions?per_page=1")

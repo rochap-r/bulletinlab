@@ -5,7 +5,6 @@ use App\Models\Utilisateur;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
 
 uses(RefreshDatabase::class);
 
@@ -37,10 +36,10 @@ test('a tenant administrator creates schools and managers with a one-time passwo
             ->assertJsonPath('data.utilisateur.doit_changer_mot_de_passe', true);
 
         $temporaryPassword = $response->json('data.mot_de_passe_temporaire');
-        expect($temporaryPassword)->toBeString()->and(Str::length($temporaryPassword))->toBe(12);
+        expect($temporaryPassword)->toBe('123456');
 
         $created = Utilisateur::query()->where('telephone_normalise', $phone)->firstOrFail();
-        expect(Hash::check($temporaryPassword, $created->mot_de_passe))->toBeTrue()
+        expect(Hash::check('123456', $created->mot_de_passe))->toBeTrue()
             ->and($created->doit_changer_mot_de_passe)->toBeTrue();
     }
 

@@ -58,7 +58,7 @@ final class TitularAssignmentRequest extends FormRequest
                 'titulariats' => ['required', 'array', 'min:1', 'max:200'],
                 'titulariats.*' => ['required', 'array:classe_id,titulaire_id'],
                 'titulariats.*.classe_id' => ['required', 'integer', 'min:1', 'distinct'],
-                'titulariats.*.titulaire_id' => ['required', 'integer', 'min:1'],
+                'titulariats.*.titulaire_id' => ['nullable', 'integer', 'min:1'],
             ] : []),
         ];
     }

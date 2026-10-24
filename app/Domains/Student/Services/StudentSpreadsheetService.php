@@ -21,7 +21,7 @@ final class StudentSpreadsheetService
 {
     private const COLUMNS = ['nom' => 'Nom', 'postnom' => 'Post-nom', 'prenom' => 'Prénom', 'sexe' => 'Sexe (M/F)',
         'date_naissance' => 'Date de naissance (AAAA-MM-JJ)', 'lieu_naissance' => 'Lieu de naissance',
-        'num_permanent' => 'Numéro permanent', 'nom_pere' => 'Nom du père', 'nom_mere' => 'Nom de la mère',
+        'num_permanent' => 'Numéro permanent (généré automatiquement si vide)', 'nom_pere' => 'Nom du père', 'nom_mere' => 'Nom de la mère',
         'telephone_parent' => 'Téléphone du parent', 'adresse' => 'Adresse'];
 
     /**

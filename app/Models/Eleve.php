@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Eleve extends Model
 {
@@ -53,6 +54,13 @@ class Eleve extends Model
     public function inscriptions(): HasMany
     {
         return $this->hasMany(Inscription::class);
+    }
+
+    public function activeInscription(): HasOne
+    {
+        return $this->hasOne(Inscription::class)
+            ->where('statut', 'ACTIF')
+            ->latestOfMany();
     }
 
     protected function nomComplet(): Attribute

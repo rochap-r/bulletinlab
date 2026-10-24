@@ -114,12 +114,12 @@ class BulletinLabCalendarSeeder extends Seeder
 
         return [
             $this->event('RENTREE', 'Rentrée scolaire 2026-2027', 'RENTREE', 'TOUS', '2026-09-01', '2026-09-01', $everyone, 'CRITIQUE', 30),
-            $this->event('CONGE_T1', 'Congé de détente du 1er trimestre', 'CONGE', 'TOUS', '2026-11-05', '2026-11-07', $schoolStaff, 'INFORMATION', 7),
+            $this->event('CONGE_T1', 'Congé de détente de novembre', 'CONGE', 'TOUS', '2026-11-05', '2026-11-07', $schoolStaff, 'INFORMATION', 7),
             $this->event('REPRISE_T1', 'Reprise des activités après le congé de détente', 'REPRISE', 'TOUS', '2026-11-09', '2026-11-09', $schoolStaff, 'VIGILANCE', 3),
-            $this->event('VACANCES_T1', 'Vacances du 1er trimestre', 'VACANCES', 'TOUS', '2026-12-23', '2027-01-09', $everyone, 'INFORMATION', 10),
+            $this->event('VACANCES_T1', 'Vacances de fin d’année', 'VACANCES', 'TOUS', '2026-12-23', '2027-01-09', $everyone, 'INFORMATION', 10),
             $this->event('REPRISE_JANVIER', 'Reprise des cours', 'REPRISE', 'TOUS', '2027-01-11', '2027-01-11', $schoolStaff, 'VIGILANCE', 5),
-            $this->event('CONGE_T2', 'Congé de détente du 2ème trimestre', 'CONGE', 'TOUS', '2027-02-18', '2027-02-20', $schoolStaff, 'INFORMATION', 7),
-            $this->event('VACANCES_T2', 'Vacances du 2ème trimestre', 'VACANCES', 'TOUS', '2027-03-22', '2027-04-03', $everyone, 'INFORMATION', 10),
+            $this->event('CONGE_T2', 'Congé de détente de février', 'CONGE', 'TOUS', '2027-02-18', '2027-02-20', $schoolStaff, 'INFORMATION', 7),
+            $this->event('VACANCES_T2', 'Vacances de mars et avril', 'VACANCES', 'TOUS', '2027-03-22', '2027-04-03', $everyone, 'INFORMATION', 10),
             $this->event('REPRISE_AVRIL', 'Reprise des cours', 'REPRISE', 'TOUS', '2027-04-05', '2027-04-05', $schoolStaff, 'VIGILANCE', 5),
             $this->event('EVALUATION_EVEIL_T1', 'Évaluation du niveau d’éveil — 1er trimestre', 'EXAMEN', 'MATERNELLE', '2026-12-10', '2026-12-17', $schoolStaff, 'VIGILANCE', 14),
             $this->event('EVALUATION_EVEIL_T2', 'Évaluation du niveau d’éveil — 2ème trimestre', 'EXAMEN', 'MATERNELLE', '2027-03-09', '2027-03-16', $schoolStaff, 'VIGILANCE', 14),

@@ -39,6 +39,12 @@ final class AssignCourseTeacherService implements AssignCourseTeacherServiceInte
 
             Gate::forUser($actor)->authorize('assignCourseTeacher', $lockedClass);
 
+            if ($lockedClass->isPrimarySchool()) {
+                throw new CourseAssignmentConflictException(
+                    'Au primaire, tous les cours sont automatiquement confiés au titulaire de la classe.',
+                );
+            }
+
             if (! $lockedClass->active) {
                 throw new CourseAssignmentConflictException(
                     'Teachers cannot be assigned to an archived class.',

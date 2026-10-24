@@ -29,6 +29,11 @@ final class SaveClassTeachingTeamService
                 ->whereKey($class->getKey())->lockForUpdate()->firstOrFail();
             Gate::forUser($actor)->authorize('assignClassTitular', $class);
             Gate::forUser($actor)->authorize('assignCourseTeacher', $class);
+
+            if ($class->isPrimarySchool()) {
+                throw new CourseAssignmentConflictException('Au primaire, seule l’attribution du titulaire de classe est disponible.');
+            }
+
             $year = $class->anneeScolaire()->lockForUpdate()->firstOrFail();
 
             if (! $class->active || ! $year->active || $year->cloturee) {

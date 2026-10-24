@@ -6,6 +6,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Style\NumberFormat;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -78,6 +79,38 @@ test('un gestionnaire importe des enseignants depuis un fichier Excel', function
 
     $created = Utilisateur::query()->where('tenant_id', $tenant->id)->where('matricule', 'ENS-101')->firstOrFail();
     expect($created->tenantRoleCodes())->toBe(['ENSEIGNANT']);
+});
+
+test('un gestionnaire importe des enseignants avec des dates dans différents formats', function (): void {
+    $tenant = createTenantForDirectUsers('enseignants-excel-dates');
+    $school = Etablissement::withoutGlobalScopes()->create(['tenant_id' => $tenant->id, 'nom' => 'École Dates', 'type_etablissement' => 'PRIMAIRE']);
+    $manager = userForDirectUsers($tenant, 'GESTIONNAIRE_ECOLE', $school);
+    globalRoleForDirectUsers('ENSEIGNANT');
+
+    $dateEmbaucheSerial = 44927;
+    $dateEmbaucheExpected = date('Y-m-d', PhpSpreadsheetDate::excelToTimestamp($dateEmbaucheSerial));
+
+    $file = enseignantsXlsxUpload([
+        enseignantsXlsxHeaders(),
+        // date_naissance au format Y-m-d (texte) : déjà valide.
+        ['Ilunga', 'Mbuyi', 'Sara', 'F', '1990-05-14', 'Kinshasa', 'sara@example.com', '+243811000701', '', 'ENS-301', 'Licence', 'Maths', ''],
+        // date_naissance au format d/m/Y (texte) et date_embauche en numéro de série Excel.
+        ['Kabasele', '', 'Jean', 'M', '03/11/1992', 'Lubumbashi', 'jean@example.com', '+243811000702', '', 'ENS-302', 'D6', 'Français', $dateEmbaucheSerial],
+    ]);
+
+    $response = $this->withToken(tokenForDirectUsers($manager))->post('/api/v1/utilisateurs/import-enseignants-excel', [
+        'fichier' => $file,
+    ])->assertCreated()->json('data');
+
+    expect($response['crees_count'])->toBe(2)
+        ->and($response['erreurs_count'])->toBe(0);
+
+    $sara = Utilisateur::query()->where('tenant_id', $tenant->id)->where('matricule', 'ENS-301')->firstOrFail();
+    expect($sara->date_naissance?->format('Y-m-d'))->toBe('1990-05-14');
+
+    $jean = Utilisateur::query()->where('tenant_id', $tenant->id)->where('matricule', 'ENS-302')->firstOrFail();
+    expect($jean->date_naissance?->format('Y-m-d'))->toBe('1992-11-03');
+    expect($jean->date_embauche?->format('Y-m-d'))->toBe($dateEmbaucheExpected);
 });
 
 test('l’import Excel ignore la colonne rôle historique et rejette un en-tête invalide', function (): void {

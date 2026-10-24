@@ -50,8 +50,8 @@ final class EnseignantsTemplateController extends Controller
         // Valeurs écrites en texte explicite : `+243...` serait sinon
         // converti en nombre par PhpSpreadsheet.
         $examples = [
-            ['Ilunga', 'Mbuyi', 'Sara', 'F', '1990-05-14', 'Kinshasa', 'sara.ilunga@example.com', '+243811000501', 'Av. de la Paix 12', 'ENS-001', 'Licenciée en mathématiques', 'Mathématiques', '2022-09-01'],
-            ['Kabasele', '', 'Jean', 'M', '', '', '', '+243811000502', '', 'ENS-002', 'D6 Pédagogie', 'Français', ''],
+            ['Ilunga', 'Mbuyi', 'Sara', 'F', '1990-05-14', 'Kinshasa', 'sara.ilunga@example.com', '+243811000501', 'Av. de la Paix 12', '', 'Licenciée en mathématiques', 'Mathématiques', '2022-09-01'],
+            ['Kabasele', '', 'Jean', 'M', '', '', '', '+243811000502', '', '', 'D6 Pédagogie', 'Français', ''],
         ];
         foreach ($examples as $rowIndex => $example) {
             foreach ($example as $columnIndex => $value) {

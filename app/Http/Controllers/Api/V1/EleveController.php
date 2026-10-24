@@ -26,10 +26,41 @@ final class EleveController extends Controller
 
     public function index(PaginationRequest $request): JsonResponse
     {
-        $students = Eleve::query()
+        $query = Eleve::query()
             ->where('etablissement_id', $this->establishmentContext->id())
-            ->latest('id')
-            ->paginate($request->integer('per_page', 50));
+            ->with([
+                'activeInscription' => fn ($query) => $query->select([
+                    'inscriptions.id',
+                    'inscriptions.eleve_id',
+                    'inscriptions.classe_id',
+                ]),
+                'activeInscription.classe:id,nom,code',
+            ])
+            ->latest('id');
+
+        $search = $request->string('search')->trim()->toString();
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search): void {
+                $q->where('nom', 'like', "%{$search}%")
+                    ->orWhere('postnom', 'like', "%{$search}%")
+                    ->orWhere('prenom', 'like', "%{$search}%")
+                    ->orWhere('num_permanent', 'like', "%{$search}%");
+            });
+        }
+
+        if ($classeId = $request->integer('classe_id')) {
+            $query->whereHas('inscriptions', function ($q) use ($classeId): void {
+                $q->where('classe_id', $classeId)
+                    ->where('actif', true);
+            });
+        }
+
+        if ($request->has('actif')) {
+            $query->where('actif', $request->boolean('actif'));
+        }
+
+        $students = $query->paginate($request->integer('per_page', 50));
 
         return EleveResource::collection($students)->response();
     }

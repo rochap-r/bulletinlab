@@ -73,3 +73,16 @@ test('le seeding des donnees CTEB reste idempotent', function (): void {
     expect(DB::table('classes')->whereIn('code', ['7EBA', '8EBA'])->count())->toBe($classCount)
         ->and(DB::table('eleves')->whereIn('num_permanent', ['25EBA7001', '25EBA8001'])->count())->toBe($studentCount);
 });
+
+test('le seeding ne nomme jamais un enseignant titulaire de deux classes la meme annee', function (): void {
+    seedCtebDemoData();
+
+    $classCounts = DB::table('classes')
+        ->whereNotNull('titulaire_id')
+        ->selectRaw('annee_scolaire_id, titulaire_id, COUNT(*) as total')
+        ->groupBy('annee_scolaire_id', 'titulaire_id')
+        ->pluck('total');
+
+    expect($classCounts)->not->toBeEmpty()
+        ->and($classCounts->every(fn (int|string $count): bool => (int) $count === 1))->toBeTrue();
+});

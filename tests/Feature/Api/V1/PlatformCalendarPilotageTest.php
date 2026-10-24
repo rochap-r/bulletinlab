@@ -69,6 +69,11 @@ test('official seed exposes the three ministry use cases', function () {
             'PRIMAIRE' => 222,
             'SECONDAIRE_TECHNIQUE' => 222,
         ])
+        ->and($calendar->periodes->firstWhere('code', 'SEMESTRE_1')?->nom)->toBe('Premier semestre')
+        ->and($calendar->evenements->firstWhere('code', 'CONGE_T1')?->nom)->toBe('Congé de détente de novembre')
+        ->and($calendar->evenements->firstWhere('code', 'VACANCES_T1')?->nom)->toBe('Vacances de fin d’année')
+        ->and($calendar->evenements->firstWhere('code', 'CONGE_T2')?->nom)->toBe('Congé de détente de février')
+        ->and($calendar->evenements->firstWhere('code', 'VACANCES_T2')?->nom)->toBe('Vacances de mars et avril')
         ->and($calendar->evenements->pluck('code'))->toContain('ENAFEP', 'TENASOSP', 'EXETAT_SESSION')
         ->and($calendar->periodes->where('cycle_scolaire', CalendarCycle::Maternelle))->not->toBeEmpty()
         ->and($calendar->periodes->where('cycle_scolaire', CalendarCycle::Primaire))->not->toBeEmpty()

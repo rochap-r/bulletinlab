@@ -155,6 +155,18 @@ class BulletinLabModelBulletinSeeder extends Seeder
         AnneeScolaire $anneeScolaire,
         Utilisateur $enseignant,
     ): void {
+        $dejaTitulaireCetteAnnee = Classe::where('tenant_id', $classe->tenant_id)
+            ->where('etablissement_id', $classe->etablissement_id)
+            ->where('annee_scolaire_id', $classe->annee_scolaire_id)
+            ->where('active', true)
+            ->where('id', '!=', $classe->id)
+            ->where('titulaire_id', $enseignant->id)
+            ->exists();
+
+        if ($dejaTitulaireCetteAnnee) {
+            return;
+        }
+
         $existant = TitulaireClasse::where('tenant_id', $classe->tenant_id)
             ->where('classe_id', $classe->id)
             ->exists();

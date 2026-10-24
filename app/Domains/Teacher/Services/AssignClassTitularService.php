@@ -19,6 +19,10 @@ use Illuminate\Support\Facades\Gate;
 
 final class AssignClassTitularService
 {
+    public function __construct(
+        private SynchronizePrimaryClassCourseAssignmentsService $synchronizePrimaryCourses,
+    ) {}
+
     public function assign(
         Classe $class,
         Utilisateur $actor,
@@ -52,6 +56,7 @@ final class AssignClassTitularService
             }
 
             $titular = $this->resolveTitular($lockedClass, $data->titularId);
+            $this->ensureAvailableForClass($lockedClass, $titular);
             [$startDate, $endDate] = $this->resolveAssignmentDates(
                 $schoolYear,
                 $data,
@@ -74,6 +79,13 @@ final class AssignClassTitularService
                 && $activeTargetAssignment
                 && $activeTargetAssignment->date_debut?->toDateString() === $startDate
                 && $activeTargetAssignment->date_fin?->toDateString() === $endDate) {
+                $this->synchronizePrimaryCourses->synchronize(
+                    $lockedClass,
+                    $titular,
+                    $startDate,
+                    $endDate,
+                );
+
                 return $activeTargetAssignment->load('utilisateur');
             }
 
@@ -117,6 +129,13 @@ final class AssignClassTitularService
             $lockedClass->update([
                 'titulaire_id' => $titular->getKey(),
             ]);
+
+            $this->synchronizePrimaryCourses->synchronize(
+                $lockedClass,
+                $titular,
+                $startDate,
+                $endDate,
+            );
 
             AuditLog::query()->create([
                 'tenant_id' => $lockedClass->tenant_id,
@@ -180,6 +199,36 @@ final class AssignClassTitularService
         $this->ensureTitularRole($titular, $class->tenant_id);
 
         return $titular;
+    }
+
+    private function ensureAvailableForClass(Classe $class, Utilisateur $titular): void
+    {
+        $otherClass = Classe::query()
+            ->where('tenant_id', $class->tenant_id)
+            ->where('etablissement_id', $class->etablissement_id)
+            ->where('annee_scolaire_id', $class->annee_scolaire_id)
+            ->where('active', true)
+            ->where('id', '!=', $class->getKey())
+            ->where(function (Builder $query) use ($titular): void {
+                $query
+                    ->where('titulaire_id', $titular->getKey())
+                    ->orWhereHas('titulariats', function (Builder $assignments) use ($titular): void {
+                        $assignments
+                            ->where('utilisateur_id', $titular->getKey())
+                            ->where('actif', true);
+                    });
+            })
+            ->orderBy('id')
+            ->first(['id', 'nom']);
+
+        if ($otherClass) {
+            throw new ClassTitularAssignmentConflictException(
+                sprintf(
+                    'Cet enseignant est déjà titulaire de la classe « %s » pour cette année scolaire.',
+                    $otherClass->nom,
+                ),
+            );
+        }
     }
 
     /**

@@ -13,6 +13,7 @@ use App\Models\Inscription;
 use App\Models\Utilisateur;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 final class ManageMyClassStudentsService
@@ -54,7 +55,15 @@ final class ManageMyClassStudentsService
         return DB::transaction(function () use ($class, $actor, $rows): array {
             $class = $this->lockClass($class, $actor);
             $result = [];
+            $generatedNumbers = [];
             foreach ($rows as $index => $row) {
+                if (! filled($row['num_permanent'] ?? null)) {
+                    do {
+                        $row['num_permanent'] = 'ELEVE-'.strtoupper(Str::random(6));
+                    } while (isset($generatedNumbers[mb_strtolower($row['num_permanent'])]));
+                    $generatedNumbers[mb_strtolower($row['num_permanent'])] = true;
+                }
+
                 if ($this->duplicate($class, $row)) {
                     throw ValidationException::withMessages(["eleves.$index.nom" => 'Un élève avec cette identité ou ce numéro existe déjà dans l’école. Contactez la direction pour vérifier son dossier.']);
                 }

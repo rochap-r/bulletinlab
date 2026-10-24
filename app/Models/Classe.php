@@ -97,4 +97,15 @@ class Classe extends Model
     {
         return $this->hasMany(TitulaireClasse::class);
     }
+
+    public function isPrimarySchool(): bool
+    {
+        $schoolType = $this->relationLoaded('etablissement')
+            ? $this->etablissement?->type_etablissement
+            : $this->etablissement()
+                ->withoutGlobalScopes()
+                ->value('type_etablissement');
+
+        return $schoolType === 'PRIMAIRE';
+    }
 }

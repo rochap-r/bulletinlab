@@ -2,6 +2,7 @@
 
 namespace App\Domains\Teacher\Services;
 
+use App\Domains\Teacher\Exceptions\CourseAssignmentConflictException;
 use App\Models\Classe;
 use App\Models\Utilisateur;
 use Illuminate\Database\Eloquent\Collection;
@@ -38,6 +39,8 @@ final class CourseAssignmentSpreadsheetService
 
     public function template(Classe $class): Spreadsheet
     {
+        $this->ensureCourseAssignmentsAreAvailable($class);
+
         $courses = $this->courses->paginate($class, 200);
         if ($courses->total() > 200) {
             throw ValidationException::withMessages(['fichier' => ['Le modèle est limité à 200 cours par classe.']]);
@@ -93,6 +96,8 @@ final class CourseAssignmentSpreadsheetService
      */
     public function preview(Classe $class, UploadedFile $file): array
     {
+        $this->ensureCourseAssignmentsAreAvailable($class);
+
         $reader = new Xlsx;
         try {
             $info = $reader->listWorksheetInfo($file->getRealPath());
@@ -163,6 +168,15 @@ final class CourseAssignmentSpreadsheetService
             return ['lignes' => $lines, 'erreurs' => $errors];
         } finally {
             $book->disconnectWorksheets();
+        }
+    }
+
+    private function ensureCourseAssignmentsAreAvailable(Classe $class): void
+    {
+        if ($class->isPrimarySchool()) {
+            throw new CourseAssignmentConflictException(
+                'Au primaire, tous les cours sont automatiquement confiés au titulaire de la classe.',
+            );
         }
     }
 }

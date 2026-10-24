@@ -22,6 +22,9 @@ class PaginationRequest extends FormRequest
         return [
             'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
             'page' => ['sometimes', 'integer', 'min:1'],
+            'search' => ['sometimes', 'string', 'max:255'],
+            'classe_id' => ['sometimes', 'integer', 'min:1'],
+            'actif' => ['sometimes', 'boolean'],
         ];
     }
 }

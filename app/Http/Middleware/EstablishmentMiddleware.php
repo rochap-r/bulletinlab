@@ -52,7 +52,8 @@ final class EstablishmentMiddleware
         if ($user instanceof Utilisateur
             && $user->etablissement_id === null
             && $this->isTenantAdministrator($user)) {
-            return $next($request);
+            // Admin sans établissement propre : doit sélectionner un établissement via header
+            throw new EstablishmentNotFoundException;
         }
 
         if (! $user instanceof Utilisateur || ! $user->etablissement_id) {

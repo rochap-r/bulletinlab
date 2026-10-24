@@ -26,6 +26,15 @@ class EleveResource extends JsonResource
             'telephone_parent' => $this->telephone_parent,
             'adresse' => $this->adresse,
             'actif' => $this->actif,
+            'classe' => $this->whenLoaded('activeInscription', function (): ?array {
+                $classe = $this->activeInscription?->classe;
+
+                return $classe ? [
+                    'id' => $classe->id,
+                    'nom' => $classe->nom,
+                    'code' => $classe->code,
+                ] : null;
+            }),
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
         ];

@@ -6,7 +6,9 @@ use App\Domains\Membership\DTOs\CreateDirectUtilisateurData;
 use App\Models\Utilisateur;
 use App\Support\PhoneNumberNormalizer;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use PhpOffice\PhpSpreadsheet\Shared\Date as PhpSpreadsheetDate;
 
 /**
  * Import mutualisé des enseignants : chaque ligne crée un utilisateur
@@ -87,11 +89,19 @@ final class ImportEnseignantsService
             ]);
         }
 
-        $matricule = isset($row['matricule']) && trim((string) $row['matricule']) !== '' ? trim((string) $row['matricule']) : null;
-        if ($matricule !== null && in_array(mb_strtolower($matricule), $matriculesVus, true)) {
-            throw ValidationException::withMessages([
-                "enseignants.{$ligne}.matricule" => ["Ligne {$ligne} : matricule dupliqué dans le fichier."],
-            ]);
+        $matriculeBrut = isset($row['matricule']) && trim((string) $row['matricule']) !== '' ? trim((string) $row['matricule']) : null;
+
+        if ($matriculeBrut !== null) {
+            if (in_array(mb_strtolower($matriculeBrut), $matriculesVus, true)) {
+                throw ValidationException::withMessages([
+                    "enseignants.{$ligne}.matricule" => ["Ligne {$ligne} : matricule dupliqué dans le fichier."],
+                ]);
+            }
+            $matricule = $matriculeBrut;
+        } else {
+            do {
+                $matricule = 'ENS-'.strtoupper(Str::random(6));
+            } while (in_array(mb_strtolower($matricule), $matriculesVus, true));
         }
 
         $sexe = isset($row['sexe']) && trim((string) $row['sexe']) !== '' ? mb_strtoupper(trim((string) $row['sexe'])) : null;
@@ -106,7 +116,7 @@ final class ImportEnseignantsService
             'postnom' => $this->cleanOrNull($row['postnom'] ?? null),
             'prenom' => $this->cleanOrNull($row['prenom'] ?? null),
             'sexe' => $sexe,
-            'date_naissance' => $this->cleanOrNull($row['date_naissance'] ?? null),
+            'date_naissance' => $this->normalizeDate($this->cleanOrNull($row['date_naissance'] ?? null)),
             'lieu_naissance' => $this->cleanOrNull($row['lieu_naissance'] ?? null),
             'email' => $this->cleanOrNull($row['email'] ?? null),
             'telephone' => $telephone,
@@ -114,7 +124,7 @@ final class ImportEnseignantsService
             'matricule' => $matricule,
             'qualification' => $this->cleanOrNull($row['qualification'] ?? null),
             'specialite' => $this->cleanOrNull($row['specialite'] ?? null),
-            'date_embauche' => $this->cleanOrNull($row['date_embauche'] ?? null),
+            'date_embauche' => $this->normalizeDate($this->cleanOrNull($row['date_embauche'] ?? null)),
             'role' => $role,
         ];
 
@@ -178,5 +188,47 @@ final class ImportEnseignantsService
         $cleaned = trim($value);
 
         return $cleaned === '' ? null : $cleaned;
+    }
+
+    /**
+     * Normalise une valeur de date lue depuis Excel vers le format Y-m-d
+     * attendu par la règle de validation Laravel `date`.
+     *
+     * Gère :
+     *  - le format Y-m-d (déjà valide),
+     *  - les formats européens d/m/Y, d-m-Y, d.m.Y,
+     *  - les numéros de série Excel (dates stockées en nombre).
+     */
+    private function normalizeDate(?string $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        // Déjà au format Y-m-d attendu par la validation Laravel.
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $value)) {
+            return $value;
+        }
+
+        // Numéro de série Excel : date stockée en nombre dans le classeur.
+        if (ctype_digit($value)) {
+            $serial = (int) $value;
+            if ($serial >= 30000 && $serial <= 60000) {
+                $timestamp = PhpSpreadsheetDate::excelToTimestamp($serial);
+                if ($timestamp !== false && $timestamp > 0) {
+                    return date('Y-m-d', $timestamp);
+                }
+            }
+        }
+
+        // Formats européens courants : d/m/Y, d-m-Y, d.m.Y
+        if (preg_match('/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/', $value)) {
+            $date = \DateTime::createFromFormat('d/m/Y', $value);
+            if ($date !== false) {
+                return $date->format('Y-m-d');
+            }
+        }
+
+        return $value;
     }
 }

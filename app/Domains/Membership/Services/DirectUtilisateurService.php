@@ -15,7 +15,6 @@ use Illuminate\Contracts\Hashing\Hasher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 final readonly class DirectUtilisateurService
@@ -310,7 +309,7 @@ final readonly class DirectUtilisateurService
                 }
 
                 $role = $this->assignableRole($tenantId, $data['role']);
-                $cible->syncRoles([$role]);
+                $cible->assignRole($role);
                 unset($data['role']);
             }
 
@@ -384,16 +383,13 @@ final readonly class DirectUtilisateurService
     }
 
     /**
-     * Mot de passe initial à la création : 123456 pour les enseignants
-     * (le flag `doit_changer_mot_de_passe` impose sa modification à la
-     * première connexion via la page `/mot-de-passe`), aléatoire pour
-     * les autres rôles.
+     * Mot de passe initial à la création : toujours 123456, quel que soit le rôle.
+     * Le flag `doit_changer_mot_de_passe` impose sa modification à la première
+     * connexion via la page `/mot-de-passe`.
      */
     public static function defaultPasswordFor(string $role): string
     {
-        return in_array($role, ['ENSEIGNANT', 'TITULAIRE'], true)
-            ? '123456'
-            : Str::password(12, letters: true, numbers: true, symbols: true);
+        return '123456';
     }
 
     private function isTenantAdministrator(Utilisateur $actor): bool

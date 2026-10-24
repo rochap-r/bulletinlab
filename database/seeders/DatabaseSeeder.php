@@ -15,6 +15,7 @@ class DatabaseSeeder extends Seeder
             BulletinLabCalendarSeeder::class,
             BulletinLabSchoolYearSeeder::class,
             BulletinLabTemplateCatalogSeeder::class,
+            BulletinLabPrimaireSeeder::class,
             BulletinLabCtebSeeder::class,
             BulletinLabScientificSeeder::class,
             BulletinLabCommercialeSeeder::class,
