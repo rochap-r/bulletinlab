@@ -24,6 +24,10 @@ RUN npm run build
 ##########
 FROM nginx:1.31-alpine
 
+# L'image officielle peut précéder la publication de correctifs Alpine.
+# Met à niveau les paquets du runtime avant le contrôle Trivy.
+RUN apk upgrade --no-cache
+
 COPY docker/frontend/proxy-scheme.conf /etc/nginx/conf.d/00-proxy-scheme.conf
 COPY docker/frontend/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
