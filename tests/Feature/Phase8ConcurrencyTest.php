@@ -36,10 +36,9 @@ beforeEach(function () {
     } catch (RuntimeException $exception) {
         $this->concurrencyPdo = null;
 
-        skip(sprintf(
-            'Concurrency test database is unavailable: %s',
-            $exception->getMessage(),
-        ));
+        $this->markTestSkipped(
+            'Concurrency test database is unavailable: '.$exception->getMessage()
+        );
     }
 });
 
