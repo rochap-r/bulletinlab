@@ -29,6 +29,7 @@ FROM nginx:1.31-alpine
 RUN apk upgrade --no-cache
 
 COPY docker/frontend/proxy-scheme.conf /etc/nginx/conf.d/00-proxy-scheme.conf
+COPY docker/frontend/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY docker/frontend/default.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 

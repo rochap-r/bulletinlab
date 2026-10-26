@@ -113,6 +113,21 @@ test('a single global school year is shared across establishments', function () 
     expect($establishmentB->tenant_id)->not->toBe($establishmentA->tenant_id);
 });
 
+test('the current school year is readable without a selected establishment', function () {
+    $year = createGlobalSchoolYear();
+    $tenant = createGlobalSchoolYearTenant();
+    $admin = createGlobalSchoolYearAdmin(
+        $tenant,
+        createGlobalSchoolYearEstablishment($tenant),
+    );
+    $admin['user']->update(['etablissement_id' => null]);
+
+    $this->withToken($admin['token'])
+        ->getJson('/api/v1/annees-scolaires/courante')
+        ->assertOk()
+        ->assertJsonPath('data.id', $year->getKey());
+});
+
 test('the current school year route fails closed when no school year matches today', function () {
     $tenant = createGlobalSchoolYearTenant();
     $admin = createGlobalSchoolYearAdmin(

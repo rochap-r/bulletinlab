@@ -122,7 +122,7 @@ function acceptancePayloadForInvitationTests(string $token, array $overrides = [
         'postnom' => 'Kasongo',
         'prenom' => 'Grâce',
         'telephone' => '+243'.random_int(100000000, 999999999),
-        'mot_de_passe' => 'secret-password',
+        'mot_de_passe' => 'SecurePassword1',
         ...$overrides,
     ];
 }
@@ -456,7 +456,7 @@ test('a single invitation grants a working membership', function () {
 
     $onboarded = Utilisateur::query()->where('tenant_id', $tenant->id)->where('email', $invitation->email)->first();
 
-    expect(Hash::check('secret-password', $onboarded->mot_de_passe))->toBeTrue()
+    expect(Hash::check('SecurePassword1', $onboarded->mot_de_passe))->toBeTrue()
         ->and($onboarded->roles()->pluck('roles.code')->all())->toBe(['PROFESSEUR']);
 
     expect($invitation->fresh()->accepted_at)->not->toBeNull();
@@ -464,7 +464,7 @@ test('a single invitation grants a working membership', function () {
     $this->postJson('/api/v1/auth/login', [
         'tenant_slug' => $tenant->slug,
         'identifiant' => $response->json('data.telephone'),
-        'password' => 'secret-password',
+        'password' => 'SecurePassword1',
     ])->assertOk()->assertJsonPath('data.user.nom', 'Mbala');
 });
 

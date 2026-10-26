@@ -32,7 +32,8 @@ final class PlatformMiddleware
             throw new PlatformContextNotFoundException;
         }
 
-        if (! $user->isActive()) {
+        if (! $user->isActive()
+            || ! $user->roles()->whereKey('ADMIN_PLATEFORME')->exists()) {
             throw new PlatformContextNotFoundException;
         }
 

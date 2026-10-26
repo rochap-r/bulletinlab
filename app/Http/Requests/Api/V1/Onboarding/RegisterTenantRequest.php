@@ -9,6 +9,7 @@ use App\Support\PhoneNumberNormalizer;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Rules\Password;
 use Illuminate\Validation\Validator;
 
 #[FailOnUnknownFields]
@@ -42,7 +43,7 @@ final class RegisterTenantRequest extends FormRequest
             'admin_prenom' => ['nullable', 'string', 'max:100'],
             'admin_email' => ['nullable', 'email', 'max:150'],
             'admin_telephone' => ['required', 'string', 'max:16', 'regex:/^\+[1-9]\d{7,14}$/'],
-            'mot_de_passe' => ['required', 'string', 'min:6', 'max:255', 'confirmed'],
+            'mot_de_passe' => ['required', 'string', 'max:255', 'confirmed', Password::defaults()],
         ];
     }
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\PlatformAuth;
 use App\Domains\Auth\Contracts\PlatformAuthServiceInterface;
 use App\Http\Controllers\Controller;
 use App\Models\UtilisateurPlateforme;
+use App\Support\AccessTokenCookies;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -23,6 +24,9 @@ class PlatformLogoutAllController extends Controller
 
         $this->platformAuthService->logoutAll($utilisateur);
 
-        return response()->noContent();
+        $response = response()->noContent();
+        $response->headers->setCookie(AccessTokenCookies::forget(AccessTokenCookies::PLATFORM));
+
+        return $response;
     }
 }

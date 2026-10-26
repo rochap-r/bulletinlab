@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Auth;
 use App\Domains\Auth\Contracts\AuthServiceInterface;
 use App\Http\Controllers\Controller;
 use App\Models\Utilisateur;
+use App\Support\AccessTokenCookies;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -22,6 +23,9 @@ class LogoutAllController extends Controller
 
         $this->authService->logoutAll($utilisateur);
 
-        return response()->noContent();
+        $response = response()->noContent();
+        $response->headers->setCookie(AccessTokenCookies::forget(AccessTokenCookies::TENANT));
+
+        return $response;
     }
 }

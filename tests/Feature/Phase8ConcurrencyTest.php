@@ -31,27 +31,23 @@ use Illuminate\Support\Str;
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
-    $this->mysqlPdo = connectToMysql();
+    $this->concurrencyPdo = connectToConcurrencyDatabase();
 });
 
 afterEach(function () {
-    if ($this->mysqlPdo instanceof PDO) {
-        $this->mysqlPdo = null;
+    if ($this->concurrencyPdo instanceof PDO) {
+        $this->concurrencyPdo = null;
     }
 
-    if (isset($this->mysqlSeeds)) {
-        cleanupMysqlData($this->mysqlSeeds);
+    if (isset($this->concurrencySeeds)) {
+        cleanupConcurrencyData($this->concurrencySeeds);
     }
 });
 
 it('delays a period lock until the note entry committing the class row finishes', function () {
-    if (! $this->mysqlPdo) {
-        $this->markTestSkipped('MySQL is not available for concurrency testing.');
-    }
+    $ids = seedConcurrencyData();
 
-    $ids = seedMysqlData();
-
-    $recorderPdo = connectToMysql();
+    $recorderPdo = connectToConcurrencyDatabase();
     $recorderPdo->beginTransaction();
 
     $statement = $recorderPdo->prepare(
@@ -59,8 +55,8 @@ it('delays a period lock until the note entry committing the class row finishes'
     );
     $statement->execute(['id' => $ids['classe']]);
 
-    $lockerPdo = connectToMysql();
-    $lockerPdo->exec('SET SESSION innodb_lock_wait_timeout = 2');
+    $lockerPdo = connectToConcurrencyDatabase();
+    configureLockTimeout($lockerPdo);
 
     expect(isLockBlocked(
         fn () => lockPeriodFromPdo($lockerPdo, $ids),
@@ -71,7 +67,7 @@ it('delays a period lock until the note entry committing the class row finishes'
     $recorderPdo->commit();
     $lockerPdo = null;
 
-    $freshPdo = connectToMysql();
+    $freshPdo = connectToConcurrencyDatabase();
     lockPeriodFromPdo($freshPdo, $ids);
 
     expect(periodLockStateFromPdo($freshPdo, $ids))->toBe(true);
@@ -81,16 +77,12 @@ it('delays a period lock until the note entry committing the class row finishes'
 });
 
 it('rejects note recording once a concurrent period lock has won', function () {
-    if (! $this->mysqlPdo) {
-        $this->markTestSkipped('MySQL is not available for concurrency testing.');
-    }
+    $ids = seedConcurrencyData();
 
-    $ids = seedMysqlData();
-
-    $lockerPdo = connectToMysql();
+    $lockerPdo = connectToConcurrencyDatabase();
     lockPeriodFromPdo($lockerPdo, $ids);
 
-    $recorderPdo = connectToMysql();
+    $recorderPdo = connectToConcurrencyDatabase();
     $recorderPdo->beginTransaction();
 
     expect(isPeriodLockedFromPdo($recorderPdo, $ids))->toBeTrue(
@@ -103,13 +95,9 @@ it('rejects note recording once a concurrent period lock has won', function () {
 });
 
 it('blocks a publication while a calculation preview holds the bulletin row', function () {
-    if (! $this->mysqlPdo) {
-        $this->markTestSkipped('MySQL is not available for concurrency testing.');
-    }
+    $ids = seedConcurrencyData();
 
-    $ids = seedMysqlData();
-
-    $previewerPdo = connectToMysql();
+    $previewerPdo = connectToConcurrencyDatabase();
     $previewerPdo->beginTransaction();
 
     $statement = $previewerPdo->prepare(
@@ -117,8 +105,8 @@ it('blocks a publication while a calculation preview holds the bulletin row', fu
     );
     $statement->execute(['id' => $ids['bulletin']]);
 
-    $publisherPdo = connectToMysql();
-    $publisherPdo->exec('SET SESSION innodb_lock_wait_timeout = 2');
+    $publisherPdo = connectToConcurrencyDatabase();
+    configureLockTimeout($publisherPdo);
 
     expect(isLockBlocked(
         fn () => publishFromPdo($publisherPdo, $ids),
@@ -129,7 +117,7 @@ it('blocks a publication while a calculation preview holds the bulletin row', fu
     $previewerPdo->rollBack();
     $publisherPdo = null;
 
-    $freshPdo = connectToMysql();
+    $freshPdo = connectToConcurrencyDatabase();
     publishFromPdo($freshPdo, $ids);
 
     expect(isPublicationPresentFromPdo($freshPdo, $ids))->toBeTrue();
@@ -139,19 +127,15 @@ it('blocks a publication while a calculation preview holds the bulletin row', fu
 });
 
 it('records a single publication for concurrent idempotent writes', function () {
-    if (! $this->mysqlPdo) {
-        $this->markTestSkipped('MySQL is not available for concurrency testing.');
-    }
+    $ids = seedConcurrencyData();
 
-    $ids = seedMysqlData();
-
-    $firstPdo = connectToMysql();
-    $secondPdo = connectToMysql();
+    $firstPdo = connectToConcurrencyDatabase();
+    $secondPdo = connectToConcurrencyDatabase();
 
     publishFromPdo($firstPdo, $ids);
     publishFromPdo($secondPdo, $ids);
 
-    $readerPdo = connectToMysql();
+    $readerPdo = connectToConcurrencyDatabase();
     $statement = $readerPdo->prepare(
         'SELECT COUNT(*) FROM publications
          WHERE bulletin_id = :bulletinId AND periode_id = :periodeId
@@ -312,22 +296,38 @@ it('reproduces the historical result from the published snapshot payload', funct
     expect($replayed->resultHash)->toBe($first->resultHash);
 });
 
-function connectToMysql(): ?PDO
+function connectToConcurrencyDatabase(): PDO
 {
-    $config = mysqlConnectionConfig();
+    $config = concurrencyDatabaseConfig();
 
     if (empty($config['host']) || empty($config['database'])) {
-        return null;
+        throw new RuntimeException(
+            'A server database must be configured for concurrency testing.',
+        );
     }
 
     try {
-        return new PDO(
-            sprintf(
+        $driver = (string) $config['driver'];
+        $dsn = match ($driver) {
+            'mysql' => sprintf(
                 'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
                 $config['host'],
                 $config['port'],
                 $config['database'],
             ),
+            'pgsql' => sprintf(
+                'pgsql:host=%s;port=%s;dbname=%s',
+                $config['host'],
+                $config['port'],
+                $config['database'],
+            ),
+            default => throw new RuntimeException(
+                "The [$driver] database driver does not support concurrency testing.",
+            ),
+        };
+
+        return new PDO(
+            $dsn,
             $config['username'],
             $config['password'],
             [
@@ -336,27 +336,37 @@ function connectToMysql(): ?PDO
                 PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             ],
         );
-    } catch (PDOException) {
-        return null;
+    } catch (PDOException $exception) {
+        throw new RuntimeException(
+            'The concurrency test database is unavailable.',
+            previous: $exception,
+        );
     }
 }
 
 /**
  * @return array<string, mixed>
  */
-function mysqlConnectionConfig(): array
+function concurrencyDatabaseConfig(): array
 {
-    $config = config('database.connections.mysql');
+    $driver = readDotEnvValue('DB_CONNECTION');
+
+    if (! in_array($driver, ['mysql', 'pgsql'], true)) {
+        return [];
+    }
+
+    $config = config("database.connections.$driver");
 
     if (! is_array($config) || empty($config['host'])) {
         return [];
     }
 
-    $database = (string) ($config['database'] ?? '');
+    $config['driver'] = $driver;
+    $config['database'] = readDotEnvValue('DB_DATABASE')
+        ?: (string) ($config['database'] ?? '');
 
-    if ($database === '' || $database === ':memory:' || $database === 'laravel') {
-        $database = readDotEnvValue('DB_DATABASE') ?: $database;
-        $config['database'] = $database;
+    if ($config['database'] === ':memory:') {
+        return [];
     }
 
     return $config;
@@ -396,9 +406,11 @@ function readDotEnvValue(string $key): ?string
     return null;
 }
 
-function seedMysqlData(): array
+function seedConcurrencyData(): array
 {
-    $pdo = connectToMysql();
+    $pdo = connectToConcurrencyDatabase();
+    $pdo->beginTransaction();
+
     $now = now()->toDateTimeString();
     $prefix = 'CONC_'.strtoupper(substr(uniqid(), -6));
     $publicId = static fn (): string => (string) Str::ulid();
@@ -423,27 +435,27 @@ function seedMysqlData(): array
 
     $pdo->exec(
         "INSERT INTO system_layouts_bulletin (code, nom, vue_blade, actif, created_at, updated_at)
-         VALUES ('{$prefix}', 'Layout {$prefix}', 'test', 1, '$now', '$now')",
+         VALUES ('{$prefix}', 'Layout {$prefix}', 'test', TRUE, '$now', '$now')",
     );
     $layoutId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO system_templates_bulletin
             (code, nom, cycle_id, degre_id, layout_id, type_decoupage, total_general_maxima, actif, created_at, updated_at)
-         VALUES ('{$prefix}', 'Template {$prefix}', $cycleId, $degreId, $layoutId, 'TRIMESTRIEL', 20.00, 1, '$now', '$now')",
+         VALUES ('{$prefix}', 'Template {$prefix}', $cycleId, $degreId, $layoutId, 'TRIMESTRIEL', 20.00, TRUE, '$now', '$now')",
     );
     $templateId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO system_template_periodes
             (template_id, code, nom, type_periode, ordre, saisissable, calculable, actif, created_at, updated_at)
-         VALUES ($templateId, 'T1', 'Trimestre 1', 'TRIMESTRE', 1, 1, 1, 1, '$now', '$now')",
+         VALUES ($templateId, 'T1', 'Trimestre 1', 'TRIMESTRE', 1, TRUE, TRUE, TRUE, '$now', '$now')",
     );
 
     $pdo->exec(
         "INSERT INTO system_template_nodes
             (template_id, type_node, libelle, ordre, obligatoire, created_at, updated_at)
-         VALUES ($templateId, 'MATIERE', 'Mathématiques', 1, 1, '$now', '$now')",
+         VALUES ($templateId, 'MATIERE', 'Mathématiques', 1, TRUE, '$now', '$now')",
     );
 
     $pdo->exec(
@@ -463,13 +475,13 @@ function seedMysqlData(): array
         "INSERT INTO utilisateurs
             (tenant_id, etablissement_id, nom, postnom, prenom, telephone, telephone_normalise, email, mot_de_passe, actif, public_id, created_at, updated_at)
          VALUES ($tenantId, $etablissementId, 'Admin', '{$prefix}', 'User', '+24300000000', '+24300000000', 'admin-{$prefix}@test.com',
-                 '".Hash::make('password123')."', 1, '{$publicId()}', '$now', '$now')",
+                 '".Hash::make('password123')."', TRUE, '{$publicId()}', '$now', '$now')",
     );
     $userId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO roles (tenant_id, code, nom, system_role, created_at, updated_at)
-         VALUES ($tenantId, 'ADMIN', 'Administrateur', 0, '$now', '$now')",
+         VALUES ($tenantId, 'ADMIN', 'Administrateur', FALSE, '$now', '$now')",
     );
     $roleId = (int) $pdo->lastInsertId();
 
@@ -480,42 +492,42 @@ function seedMysqlData(): array
     $pdo->exec(
         "INSERT INTO calendriers_scolaires
             (code, libelle, pays, date_debut, date_fin, officiel, actif, created_at, updated_at)
-         VALUES ('{$prefix}', 'Calendrier {$prefix}', 'RDC', '2026-09-01', '2027-07-31', 1, 1, '$now', '$now')",
+         VALUES ('{$prefix}', 'Calendrier {$prefix}', 'RDC', '2026-09-01', '2027-07-31', TRUE, TRUE, '$now', '$now')",
     );
     $calendrierId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO annees_scolaires
             (calendrier_scolaire_id, libelle, date_debut, date_fin, active, created_at, updated_at)
-         VALUES ($calendrierId, '2026-2027', '2026-09-01', '2027-07-31', 1, '$now', '$now')",
+         VALUES ($calendrierId, '2026-2027', '2026-09-01', '2027-07-31', TRUE, '$now', '$now')",
     );
     $anneeId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO classes
             (tenant_id, etablissement_id, annee_scolaire_id, cycle_id, degre_id, niveau_id, system_template_id, nom, active, public_id, created_at, updated_at)
-         VALUES ($tenantId, $etablissementId, $anneeId, $cycleId, $degreId, $niveauId, $templateId, 'Classe {$prefix}', 1, '{$publicId()}', '$now', '$now')",
+         VALUES ($tenantId, $etablissementId, $anneeId, $cycleId, $degreId, $niveauId, $templateId, 'Classe {$prefix}', TRUE, '{$publicId()}', '$now', '$now')",
     );
     $classeId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO modeles_bulletin
             (tenant_id, classe_id, annee_scolaire_id, system_template_id, layout_id, nom, type_decoupage, total_general_maxima, verrouille, actif, public_id, created_at, updated_at)
-         VALUES ($tenantId, $classeId, $anneeId, $templateId, $layoutId, 'Modèle {$prefix}', 'TRIMESTRIEL', 20.00, 0, 1, '{$publicId()}', '$now', '$now')",
+         VALUES ($tenantId, $classeId, $anneeId, $templateId, $layoutId, 'Modèle {$prefix}', 'TRIMESTRIEL', 20.00, FALSE, TRUE, '{$publicId()}', '$now', '$now')",
     );
     $modeleId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO modele_periodes
             (tenant_id, modele_bulletin_id, system_periode_id, code, nom, type_periode, ordre, saisissable, calculable, actif, created_at, updated_at)
-         VALUES ($tenantId, $modeleId, NULL, 'T1', 'Trimestre 1', 'TRIMESTRE', 1, 1, 1, 1, '$now', '$now')",
+         VALUES ($tenantId, $modeleId, NULL, 'T1', 'Trimestre 1', 'TRIMESTRE', 1, TRUE, TRUE, TRUE, '$now', '$now')",
     );
     $periodeId = (int) $pdo->lastInsertId();
 
     $pdo->exec(
         "INSERT INTO modele_nodes
             (tenant_id, modele_bulletin_id, system_node_id, type_node, libelle, ordre, obligatoire, created_at, updated_at)
-         VALUES ($tenantId, $modeleId, NULL, 'MATIERE', 'Mathématiques', 1, 1, '$now', '$now')",
+         VALUES ($tenantId, $modeleId, NULL, 'MATIERE', 'Mathématiques', 1, TRUE, '$now', '$now')",
     );
     $nodeId = (int) $pdo->lastInsertId();
 
@@ -528,7 +540,7 @@ function seedMysqlData(): array
     $pdo->exec(
         "INSERT INTO eleves
             (tenant_id, etablissement_id, nom, postnom, prenom, sexe, date_naissance, lieu_naissance, actif, public_id, created_at, updated_at)
-         VALUES ($tenantId, $etablissementId, 'Dupont', 'Jean', 'Marie', 'F', '2008-01-15', 'Kinshasa', 1, '{$publicId()}', '$now', '$now')",
+         VALUES ($tenantId, $etablissementId, 'Dupont', 'Jean', 'Marie', 'F', '2008-01-15', 'Kinshasa', TRUE, '{$publicId()}', '$now', '$now')",
     );
     $eleveId = (int) $pdo->lastInsertId();
 
@@ -542,7 +554,7 @@ function seedMysqlData(): array
     $pdo->exec(
         "INSERT INTO bulletins
             (tenant_id, inscription_id, classe_id, modele_bulletin_id, verrouille, public_id, created_at, updated_at)
-         VALUES ($tenantId, $inscriptionId, $classeId, $modeleId, 0, '{$publicId()}', '$now', '$now')",
+         VALUES ($tenantId, $inscriptionId, $classeId, $modeleId, FALSE, '{$publicId()}', '$now', '$now')",
     );
     $bulletinId = (int) $pdo->lastInsertId();
 
@@ -555,8 +567,8 @@ function seedMysqlData(): array
     $pdo->exec(
         "INSERT INTO baremes_mentions
             (tenant_id, cycle_id, system_template_id, min_pourcentage, max_pourcentage, mention, decision_defaut, ordre, actif, created_at, updated_at)
-         VALUES ($tenantId, $cycleId, $templateId, 0.00, 49.99, 'INSUFFISANT', 'ECHOUE', 1, 1, '$now', '$now'),
-                ($tenantId, $cycleId, $templateId, 50.00, 100.00, 'PASSABLE', 'PASSE', 2, 1, '$now', '$now')",
+         VALUES ($tenantId, $cycleId, $templateId, 0.00, 49.99, 'INSUFFISANT', 'ECHOUE', 1, TRUE, '$now', '$now'),
+                ($tenantId, $cycleId, $templateId, 50.00, 100.00, 'PASSABLE', 'PASSE', 2, TRUE, '$now', '$now')",
     );
 
     $ids = [
@@ -580,37 +592,35 @@ function seedMysqlData(): array
         'bulletin' => $bulletinId,
     ];
 
-    test()->mysqlSeeds = $ids;
+    $pdo->commit();
+    test()->concurrencySeeds = $ids;
 
     return $ids;
 }
 
-function cleanupMysqlData(array $ids): void
+function cleanupConcurrencyData(array $ids): void
 {
-    $pdo = connectToMysql();
-
-    if (! $pdo instanceof PDO) {
-        return;
-    }
-
-    $pdo->exec('SET FOREIGN_KEY_CHECKS = 0');
+    $pdo = connectToConcurrencyDatabase();
 
     $delete = static function (string $table, string $column, int $value) use ($pdo): void {
         $pdo->exec("DELETE FROM {$table} WHERE {$column} = {$value}");
     };
 
-    foreach (['baremes_mentions', 'notes', 'resultats_bulletins', 'publications',
+    foreach (['publications', 'resultats_bulletins', 'baremes_mentions', 'notes',
         'suivis_encodage_notes', 'verrouillages_periodes', 'bulletins', 'inscriptions',
         'eleves', 'modele_maxima', 'modele_nodes', 'modele_periodes', 'modeles_bulletin',
-        'classes', 'utilisateurs', 'roles', 'etablissements'] as $table) {
+        'classes'] as $table) {
         $delete($table, 'tenant_id', $ids['tenant']);
     }
+
+    $delete('utilisateur_roles', 'utilisateur_id', $ids['user']);
+    $delete('utilisateurs', 'tenant_id', $ids['tenant']);
+    $delete('roles', 'tenant_id', $ids['tenant']);
+    $delete('etablissements', 'tenant_id', $ids['tenant']);
 
     $delete('annees_scolaires', 'id', $ids['annee']);
 
     $delete('tenants', 'id', $ids['tenant']);
-
-    $delete('utilisateur_roles', 'utilisateur_id', $ids['user']);
 
     $delete('system_template_nodes', 'template_id', $ids['template']);
     $delete('system_template_periodes', 'template_id', $ids['template']);
@@ -622,8 +632,17 @@ function cleanupMysqlData(array $ids): void
     $delete('ref_niveaux', 'id', $ids['niveau']);
     $delete('ref_degres', 'id', $ids['degre']);
     $delete('ref_cycles', 'id', $ids['cycle']);
+}
 
-    $pdo->exec('SET FOREIGN_KEY_CHECKS = 1');
+function configureLockTimeout(PDO $pdo): void
+{
+    $statement = match ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME)) {
+        'mysql' => 'SET SESSION innodb_lock_wait_timeout = 2',
+        'pgsql' => "SET lock_timeout = '2s'",
+        default => throw new RuntimeException('Unsupported concurrency database driver.'),
+    };
+
+    $pdo->exec($statement);
 }
 
 function lockPeriodFromPdo(PDO $pdo, array $ids): void
@@ -649,14 +668,14 @@ function lockPeriodFromPdo(PDO $pdo, array $ids): void
     if ($existingId !== false) {
         $pdo->prepare(
             'UPDATE verrouillages_periodes
-             SET verrouille = 1, verrouille_par = :user, date_verrouillage = NOW()
+             SET verrouille = TRUE, verrouille_par = :user, date_verrouillage = NOW()
              WHERE id = :id',
         )->execute(['user' => $ids['user'], 'id' => $existingId]);
     } else {
         $pdo->prepare(
             'INSERT INTO verrouillages_periodes
                 (tenant_id, classe_id, periode_id, verrouille, verrouille_par, date_verrouillage, created_at, updated_at)
-             VALUES (:tenant, :classe, :periode, 1, :user, NOW(), NOW(), NOW())',
+             VALUES (:tenant, :classe, :periode, TRUE, :user, NOW(), NOW(), NOW())',
         )->execute([
             'tenant' => $ids['tenant'],
             'classe' => $ids['classe'],
@@ -706,10 +725,11 @@ function isLockBlocked(callable $attempt): bool
 
         return false;
     } catch (PDOException $exception) {
-        return str_contains(
-            strtolower($exception->getMessage()),
-            'lock wait timeout',
-        );
+        $message = strtolower($exception->getMessage());
+
+        return $exception->getCode() === '55P03'
+            || str_contains($message, 'lock wait timeout')
+            || str_contains($message, 'lock timeout');
     }
 }
 
@@ -736,7 +756,7 @@ function publishFromPdo(PDO $pdo, array $ids): void
         $pdo->prepare(
             'UPDATE bulletins
              SET total_obtenu = 16.00, total_maxima = 20.00, pourcentage = 80.00,
-                 verrouille = 1, calcule_at = NOW(), updated_at = NOW()
+                 verrouille = TRUE, calcule_at = NOW(), updated_at = NOW()
              WHERE id = :id',
         )->execute(['id' => $ids['bulletin']]);
 

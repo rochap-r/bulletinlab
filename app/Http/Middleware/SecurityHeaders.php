@@ -17,10 +17,23 @@ final class SecurityHeaders
         $response->headers->set('X-Frame-Options', 'DENY');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-        $response->headers->set(
-            'Content-Security-Policy',
-            "default-src 'self'; frame-ancestors 'none'"
-        );
+        $response->headers->set('Cross-Origin-Opener-Policy', 'same-origin');
+        if ($request->is('api/*')) {
+            $response->headers->set(
+                'Content-Security-Policy',
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            );
+            $response->headers->set('Cache-Control', 'no-store, private');
+        } else {
+            $response->headers->set(
+                'Content-Security-Policy',
+                "default-src 'self'; frame-ancestors 'none'"
+            );
+        }
+
+        if ($request->isSecure()) {
+            $response->headers->set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+        }
         // expose_php / Server sont émis par PHP / nginx : header_remove est un
         // best-effort applicatif, le retrait réel exige expose_php=off (php.ini)
         // et server_tokens off (nginx).

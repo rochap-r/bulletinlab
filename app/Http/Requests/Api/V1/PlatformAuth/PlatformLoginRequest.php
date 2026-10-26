@@ -4,8 +4,10 @@ namespace App\Http\Requests\Api\V1\PlatformAuth;
 
 use App\Domains\Auth\DTOs\PlatformLoginData;
 use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
 
+#[FailOnUnknownFields]
 class PlatformLoginRequest extends FormRequest
 {
     public function authorize(): bool
@@ -21,7 +23,7 @@ class PlatformLoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => ['required', 'string', 'max:150'],
+            'email' => ['required', 'string', 'email:strict', 'max:150'],
             'password' => ['required', 'string', 'max:255'],
         ];
     }
@@ -29,7 +31,7 @@ class PlatformLoginRequest extends FormRequest
     public function loginData(): PlatformLoginData
     {
         return new PlatformLoginData(
-            identifiant: trim($this->string('email')->toString()),
+            identifiant: $this->string('email')->trim()->lower()->toString(),
             password: $this->string('password')->toString(),
         );
     }

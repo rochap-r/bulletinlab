@@ -36,10 +36,12 @@ test('a tenant administrator creates schools and managers with a one-time passwo
             ->assertJsonPath('data.utilisateur.doit_changer_mot_de_passe', true);
 
         $temporaryPassword = $response->json('data.mot_de_passe_temporaire');
-        expect($temporaryPassword)->toBe('123456');
+        expect($temporaryPassword)->toBeString()
+            ->and(strlen($temporaryPassword))->toBe(16)
+            ->and($temporaryPassword)->not->toBe('123456');
 
         $created = Utilisateur::query()->where('telephone_normalise', $phone)->firstOrFail();
-        expect(Hash::check('123456', $created->mot_de_passe))->toBeTrue()
+        expect(Hash::check($temporaryPassword, $created->mot_de_passe))->toBeTrue()
             ->and($created->doit_changer_mot_de_passe)->toBeTrue();
     }
 

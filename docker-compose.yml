@@ -1,16 +1,16 @@
-# Stack Docker de BulletinLab — Laravel + React + PostgreSQL + Redis.
+# Stack Docker unifiée — BulletinLab (local, reflète la production)
+# Nom du projet : topscolaire
 #
 # Usage :
-#   cp .env.production.example .env.production
-#   docker compose --env-file .env.production config --quiet
-#   docker compose --env-file .env.production build
-#   docker compose --env-file .env.production --profile maintenance run --rm migrate
-#   docker compose --env-file .env.production up -d
+#   docker compose --env-file .env.docker config --quiet
+#   docker compose --env-file .env.docker build
+#   docker compose --env-file .env.docker --profile maintenance run --rm migrate
+#   docker compose --env-file .env.docker up -d
 #
-# Adminer (profil optionnel, bindé sur localhost) :
-#   docker compose --env-file .env.production --profile tools up -d adminer
+# Adminer (profil optionnel) :
+#   docker compose --env-file .env.docker --profile tools up -d adminer
 
-name: ${COMPOSE_PROJECT_NAME:-topscolaire}
+name: topscolaire
 
 x-logging: &default-logging
   driver: json-file
@@ -19,31 +19,30 @@ x-logging: &default-logging
     max-file: "3"
 
 x-api-service: &api-service
-  image: bulletinlab/api:${IMAGE_TAG:-local}
   build:
     context: .
     dockerfile: docker/api/Dockerfile
   env_file:
-    - .env.production
+    - .env.docker
   init: true
   networks:
     - backend
   logging: *default-logging
 
 x-app-storage: &app-storage
-  - api_storage:/var/www/html/storage
+  - topscolaire_api_storage:/var/www/html/storage
 
 services:
+  # Base de données PostgreSQL 18 — volume EXISTANT conservé (tes données restent)
   db:
     image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_DATABASE:-bulletinlab}
       POSTGRES_USER: ${DB_USERNAME:-bulletinlab}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:?Renseignez DB_PASSWORD dans .env.production}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Renseignez DB_PASSWORD dans .env.docker}
     volumes:
-      # PostgreSQL 18+ stocke les données dans un sous-dossier versionné.
-      - pg_data:/var/lib/postgresql
+      - topscolaire_pg_data:/var/lib/postgresql
     healthcheck:
       test:
         - CMD-SHELL
@@ -56,6 +55,7 @@ services:
       - backend
     logging: *default-logging
 
+  # Redis (cache, sessions, queue)
   redis:
     image: redis:7-alpine
     restart: unless-stopped
@@ -64,7 +64,7 @@ services:
       - --appendonly
       - "yes"
     volumes:
-      - redis_data:/data
+      - topscolaire_redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -74,7 +74,7 @@ services:
       - backend
     logging: *default-logging
 
-  # Migrations déclenchées manuellement avant le démarrage / la mise à jour.
+  # Migrations (à lancer manuellement avant le premier démarrage / maj)
   migrate:
     <<: *api-service
     profiles:
@@ -92,7 +92,7 @@ services:
       redis:
         condition: service_healthy
 
-  # PHP-FPM Laravel.
+  # API Laravel (PHP-FPM)
   api:
     <<: *api-service
     restart: unless-stopped
@@ -110,7 +110,7 @@ services:
       start_period: 30s
     stop_grace_period: 30s
 
-  # Nginx interne devant PHP-FPM (FastCGI).
+  # Nginx devant PHP-FPM (FastCGI)
   api-nginx:
     image: nginx:1.31-alpine
     restart: unless-stopped
@@ -133,7 +133,7 @@ services:
       - backend
     logging: *default-logging
 
-  # Workers de file d'attente.
+  # Workers de file d'attente
   queue:
     <<: *api-service
     user: "www-data"
@@ -155,7 +155,7 @@ services:
         condition: service_healthy
     stop_grace_period: 120s
 
-  # Planificateur Laravel.
+  # Planificateur Laravel
   scheduler:
     <<: *api-service
     user: "www-data"
@@ -173,9 +173,8 @@ services:
       redis:
         condition: service_healthy
 
-  # SPA React statique + proxy /api vers l'API.
+  # SPA React statique + proxy /api vers l'API
   frontend:
-    image: bulletinlab/frontend:${IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: docker/frontend/Dockerfile
@@ -191,7 +190,7 @@ services:
       - backend
     logging: *default-logging
 
-  # Console d'administration PostgreSQL, désactivée par défaut.
+  # Console d'administration PostgreSQL (profil optionnel)
   adminer:
     image: adminer:5
     profiles:
@@ -209,11 +208,11 @@ services:
     logging: *default-logging
 
 volumes:
-  pg_data:
+  topscolaire_pg_data:
     driver: local
-  redis_data:
+  topscolaire_redis_data:
     driver: local
-  api_storage:
+  topscolaire_api_storage:
     driver: local
 
 networks:

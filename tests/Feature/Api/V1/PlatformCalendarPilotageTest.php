@@ -2,6 +2,7 @@
 
 use App\Enums\CalendarCycle;
 use App\Models\CalendrierScolaire;
+use App\Models\RolePlateforme;
 use App\Models\UtilisateurPlateforme;
 use Database\Seeders\BulletinLabCalendarSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -9,7 +10,12 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
+    RolePlateforme::query()->updateOrCreate(
+        ['code' => 'ADMIN_PLATEFORME'],
+        ['nom' => 'Administrateur plateforme'],
+    );
     $admin = UtilisateurPlateforme::factory()->create(['actif' => true]);
+    $admin->roles()->syncWithoutDetaching(['ADMIN_PLATEFORME']);
     $this->withToken($admin->createToken('calendar-pilotage-test', ['context:platform'])->plainTextToken);
 });
 

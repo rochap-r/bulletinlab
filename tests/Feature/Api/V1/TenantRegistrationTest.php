@@ -29,8 +29,8 @@ function tenantRegistrationPayloadForTenantTests(array $overrides = []): array
         'admin_prenom' => 'Grâce',
         'admin_email' => 'admin.lumiere@example.test',
         'admin_telephone' => '+243811000001',
-        'mot_de_passe' => 'secret-password',
-        'mot_de_passe_confirmation' => 'secret-password',
+        'mot_de_passe' => 'SecurePassword1',
+        'mot_de_passe_confirmation' => 'SecurePassword1',
         ...$overrides,
     ];
 }
@@ -182,11 +182,11 @@ test('a weak password is rejected during self-registration', function () {
     ]))->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
 });
 
-test('a six character password is accepted during self-registration', function () {
+test('a six character password is rejected during self-registration', function () {
     $this->postJson('/api/v1/public/tenants', tenantRegistrationPayloadForTenantTests([
         'mot_de_passe' => 'abcdef',
         'mot_de_passe_confirmation' => 'abcdef',
-    ]))->assertCreated();
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
 });
 
 test('an unknown field is rejected during self-registration', function () {

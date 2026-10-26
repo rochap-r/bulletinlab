@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Middleware\AuthenticateWithAccessTokenCookie;
 use App\Http\Middleware\EnsureTenantPermission;
 use App\Http\Middleware\EnsureTenantRole;
 use App\Http\Middleware\EstablishmentMiddleware;
@@ -11,6 +12,7 @@ use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TenantMiddleware;
 use App\Http\Middleware\TenantValidatedMiddleware;
 use App\Http\Responses\ProblemDetailsResponse;
+use Illuminate\Contracts\Auth\Middleware\AuthenticatesRequests;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -26,11 +28,13 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: env('TRUSTED_PROXIES', 'REMOTE_ADDR'));
+        $middleware->statefulApi();
 
         $middleware->append(SecurityHeaders::class);
         $middleware->append(RequestLogging::class);
 
         $middleware->alias([
+            'auth.cookie' => AuthenticateWithAccessTokenCookie::class,
             'establishment' => EstablishmentMiddleware::class,
             'platform' => PlatformMiddleware::class,
             'tenant' => TenantMiddleware::class,
@@ -42,6 +46,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
 
         $middleware->redirectGuestsTo(fn (Request $request): ?string => null);
+
+        $middleware->prependToPriorityList(
+            AuthenticatesRequests::class,
+            AuthenticateWithAccessTokenCookie::class,
+        );
 
         $middleware->prependToPriorityList(
             SubstituteBindings::class,

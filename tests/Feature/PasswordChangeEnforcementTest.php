@@ -76,12 +76,12 @@ test('a forced user sets the initial password without the current one', function
     ])->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
 
     $this->withToken($token)->postJson('/api/v1/me/password-initial', [
-        'mot_de_passe' => 'nouveau-mot-de-passe-sûr',
-        'mot_de_passe_confirmation' => 'nouveau-mot-de-passe-sûr',
+        'mot_de_passe' => 'Nouveau-mot-de-passe1',
+        'mot_de_passe_confirmation' => 'Nouveau-mot-de-passe1',
     ])->assertOk()->assertJsonPath('data.doit_changer_mot_de_passe', false);
 
     expect($user->fresh()?->doit_changer_mot_de_passe)->toBeFalse()
-        ->and(Hash::check('nouveau-mot-de-passe-sûr', $user->fresh()?->mot_de_passe))->toBeTrue();
+        ->and(Hash::check('Nouveau-mot-de-passe1', $user->fresh()?->mot_de_passe))->toBeTrue();
 
     $this->app['auth']->forgetGuards();
     $this->withToken($token)->getJson('/api/v1/me')->assertOk()
@@ -94,8 +94,8 @@ test('the initial password endpoint refuses users without a pending change', fun
     $token = pwdToken($user);
 
     $this->withToken($token)->postJson('/api/v1/me/password-initial', [
-        'mot_de_passe' => 'nouveau-mot-de-passe-sûr',
-        'mot_de_passe_confirmation' => 'nouveau-mot-de-passe-sûr',
+        'mot_de_passe' => 'Nouveau-mot-de-passe1',
+        'mot_de_passe_confirmation' => 'Nouveau-mot-de-passe1',
     ])->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe']);
 });
 test('a wrong current password is rejected', function (): void {
@@ -105,8 +105,8 @@ test('a wrong current password is rejected', function (): void {
 
     $this->withToken($token)->postJson('/api/v1/me/password', [
         'mot_de_passe_actuel' => 'mauvais-mot-de-passe',
-        'mot_de_passe' => 'nouveau-mot-de-passe-sûr',
-        'mot_de_passe_confirmation' => 'nouveau-mot-de-passe-sûr',
+        'mot_de_passe' => 'Nouveau-mot-de-passe1',
+        'mot_de_passe_confirmation' => 'Nouveau-mot-de-passe1',
     ])->assertUnprocessable()->assertJsonValidationErrors(['mot_de_passe_actuel']);
 });
 
@@ -121,11 +121,11 @@ test('a password change propagates to sibling tenants and unlocks business route
 
     $this->withToken(pwdToken($userA))->postJson('/api/v1/me/password', [
         'mot_de_passe_actuel' => 'ancien-mot-de-passe',
-        'mot_de_passe' => 'nouveau-mot-de-passe-sûr',
-        'mot_de_passe_confirmation' => 'nouveau-mot-de-passe-sûr',
+        'mot_de_passe' => 'Nouveau-mot-de-passe1',
+        'mot_de_passe_confirmation' => 'Nouveau-mot-de-passe1',
     ])->assertOk()->assertHeader('Cache-Control', 'no-store, private');
 
-    expect(Hash::check('nouveau-mot-de-passe-sûr', $userB->fresh()?->mot_de_passe))->toBeTrue()
+    expect(Hash::check('Nouveau-mot-de-passe1', $userB->fresh()?->mot_de_passe))->toBeTrue()
         ->and($userB->fresh()?->doit_changer_mot_de_passe)->toBeFalse()
         ->and($userA->fresh()?->doit_changer_mot_de_passe)->toBeFalse()
         ->and($userA->fresh()?->derniere_connexion_at)->not->toBeNull();
@@ -140,7 +140,7 @@ test('a password change propagates to sibling tenants and unlocks business route
     $this->postJson('/api/v1/auth/login', [
         'tenant_slug' => $tenantB->slug,
         'identifiant' => '+243821000003',
-        'password' => 'nouveau-mot-de-passe-sûr',
+        'password' => 'Nouveau-mot-de-passe1',
     ])->assertOk();
 });
 

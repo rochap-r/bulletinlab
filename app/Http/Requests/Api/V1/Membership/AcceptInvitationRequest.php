@@ -6,6 +6,7 @@ use App\Domains\Membership\DTOs\AcceptanceData;
 use App\Support\PhoneNumberNormalizer;
 use Illuminate\Foundation\Http\Attributes\FailOnUnknownFields;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rules\Password;
 
 #[FailOnUnknownFields]
 final class AcceptInvitationRequest extends FormRequest
@@ -26,7 +27,7 @@ final class AcceptInvitationRequest extends FormRequest
             'postnom' => ['nullable', 'string', 'max:100'],
             'prenom' => ['nullable', 'string', 'max:100'],
             'telephone' => ['required', 'string', 'max:16', 'regex:/^\+[1-9]\d{7,14}$/'],
-            'mot_de_passe' => ['required', 'string', 'min:6', 'max:255'],
+            'mot_de_passe' => ['required', 'string', 'max:255', Password::defaults()],
         ];
     }
 

@@ -15,6 +15,7 @@ use Illuminate\Contracts\Hashing\Hasher;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
 final readonly class DirectUtilisateurService
@@ -65,7 +66,7 @@ final readonly class DirectUtilisateurService
 
             $role = $this->assignableRole($tenantId, $data->role);
 
-            $temporaryPassword = self::defaultPasswordFor($data->role);
+            $temporaryPassword = self::generateTemporaryPassword();
 
             try {
                 $utilisateur = Utilisateur::query()->create([
@@ -382,14 +383,9 @@ final readonly class DirectUtilisateurService
             : self::MANAGER_ASSIGNABLE_ROLES;
     }
 
-    /**
-     * Mot de passe initial à la création : toujours 123456, quel que soit le rôle.
-     * Le flag `doit_changer_mot_de_passe` impose sa modification à la première
-     * connexion via la page `/mot-de-passe`.
-     */
-    public static function defaultPasswordFor(string $role): string
+    private static function generateTemporaryPassword(): string
     {
-        return '123456';
+        return Str::password(length: 16, spaces: false);
     }
 
     private function isTenantAdministrator(Utilisateur $actor): bool

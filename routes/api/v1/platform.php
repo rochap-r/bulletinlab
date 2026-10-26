@@ -10,7 +10,7 @@ Route::post('platform/auth/login', PlatformLoginController::class)
     ->middleware('throttle:platform.auth.login')
     ->name('platform.auth.login');
 
-Route::middleware(['auth:sanctum', 'platform', 'throttle:api'])->group(function (): void {
+Route::middleware(['auth.cookie', 'auth:sanctum', 'platform', 'throttle:api'])->group(function (): void {
     Route::post('platform/auth/logout', PlatformLogoutController::class)
         ->name('platform.auth.logout');
 

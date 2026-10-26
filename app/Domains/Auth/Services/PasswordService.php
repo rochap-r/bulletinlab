@@ -37,7 +37,7 @@ final readonly class PasswordService
     }
 
     /**
-     * Première connexion : le mot de passe initial (ex. 123456) est déjà
+     * Première connexion : le mot de passe temporaire est déjà
      * connu du système, l'utilisateur renseigne uniquement le nouveau.
      * Réservé aux comptes avec `doit_changer_mot_de_passe`.
      */

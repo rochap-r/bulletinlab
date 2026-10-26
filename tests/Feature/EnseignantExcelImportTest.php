@@ -71,8 +71,11 @@ test('un gestionnaire importe des enseignants depuis un fichier Excel', function
         ->and($response['erreurs_count'])->toBe(1)
         ->and($response['total'])->toBe(3)
         ->and($response['erreurs'][0]['ligne'])->toBe(4)
-        ->and($response['crees'][0]['mot_de_passe_temporaire'])->toBe('123456')
-        ->and($response['crees'][1]['mot_de_passe_temporaire'])->toBe('123456');
+        ->and($response['crees'][0]['mot_de_passe_temporaire'])->toBeString()
+        ->and(strlen($response['crees'][0]['mot_de_passe_temporaire']))->toBe(16)
+        ->and($response['crees'][1]['mot_de_passe_temporaire'])->toBeString()
+        ->and(strlen($response['crees'][1]['mot_de_passe_temporaire']))->toBe(16)
+        ->and($response['crees'][0]['mot_de_passe_temporaire'])->not->toBe($response['crees'][1]['mot_de_passe_temporaire']);
 
     $this->assertDatabaseHas('utilisateurs', ['tenant_id' => $tenant->id, 'matricule' => 'ENS-101', 'telephone_normalise' => '+243811000601']);
     $this->assertDatabaseHas('utilisateurs', ['tenant_id' => $tenant->id, 'matricule' => 'ENS-102', 'telephone_normalise' => '+243811000602']);

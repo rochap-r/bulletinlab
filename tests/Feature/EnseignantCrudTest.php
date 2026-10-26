@@ -62,12 +62,14 @@ test('un gestionnaire importe des enseignants avec rapport ligne par ligne', fun
 
     expect($response['crees_count'])->toBe(1)
         ->and($response['erreurs_count'])->toBe(2)
-        ->and($response['crees'][0]['mot_de_passe_temporaire'])->toBe('123456');
+        ->and($response['crees'][0]['mot_de_passe_temporaire'])->toBeString()
+        ->and(strlen($response['crees'][0]['mot_de_passe_temporaire']))->toBe(16)
+        ->and($response['crees'][0]['mot_de_passe_temporaire'])->not->toBe('123456');
 
     $this->assertDatabaseHas('utilisateurs', ['tenant_id' => $tenant->id, 'matricule' => 'ENS-101']);
 });
 
-test('un enseignant créé reçoit le mot de passe 123456 et doit le changer à la première connexion', function (): void {
+test('un enseignant créé reçoit un mot de passe aléatoire et doit le changer à la première connexion', function (): void {
     $tenant = createTenantForDirectUsers('enseignants-mdp-defaut');
     $school = Etablissement::withoutGlobalScopes()->create(['tenant_id' => $tenant->id, 'nom' => 'École F', 'type_etablissement' => 'PRIMAIRE']);
     $manager = userForDirectUsers($tenant, 'GESTIONNAIRE_ECOLE', $school);
@@ -75,14 +77,19 @@ test('un enseignant créé reçoit le mot de passe 123456 et doit le changer à 
         globalRoleForDirectUsers($code);
     }
 
-    $createdId = $this->withToken(tokenForDirectUsers($manager))->postJson('/api/v1/utilisateurs', [
+    $response = $this->withToken(tokenForDirectUsers($manager))->postJson('/api/v1/utilisateurs', [
         'nom' => 'Ilunga',
         'telephone' => '+243811000501',
         'role' => 'ENSEIGNANT',
-    ])->assertCreated()->json('data.utilisateur.id');
+    ])->assertCreated()->json('data');
+
+    $createdId = $response['utilisateur']['id'];
+    $temporaryPassword = $response['mot_de_passe_temporaire'];
 
     $teacher = Utilisateur::query()->whereKey($createdId)->firstOrFail();
-    expect(Hash::check('123456', $teacher->mot_de_passe))->toBeTrue()
+    expect($temporaryPassword)->toBeString()
+        ->and(strlen($temporaryPassword))->toBe(16)
+        ->and(Hash::check($temporaryPassword, $teacher->mot_de_passe))->toBeTrue()
         ->and($teacher->doit_changer_mot_de_passe)->toBeTrue();
 
     $this->app['auth']->forgetGuards();
@@ -92,9 +99,9 @@ test('un enseignant créé reçoit le mot de passe 123456 et doit le changer à 
         ->assertJsonPath('detail', 'PASSWORD_CHANGE_REQUIRED');
 
     $this->withToken($token)->postJson('/api/v1/me/password', [
-        'mot_de_passe_actuel' => '123456',
-        'mot_de_passe' => 'nouveau-mot-de-passe-sur',
-        'mot_de_passe_confirmation' => 'nouveau-mot-de-passe-sur',
+        'mot_de_passe_actuel' => $temporaryPassword,
+        'mot_de_passe' => 'Nouveau-mot-de-passe1',
+        'mot_de_passe_confirmation' => 'Nouveau-mot-de-passe1',
     ])->assertOk();
 
     expect($teacher->fresh()?->doit_changer_mot_de_passe)->toBeFalse();

@@ -3,6 +3,7 @@
 use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
 use App\Models\CalendrierScolaire;
+use App\Models\RolePlateforme;
 use App\Models\UtilisateurPlateforme;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
@@ -50,7 +51,12 @@ function publishableCalendarPayload(string $code = 'CAL_NATIONAL'): array
 }
 
 beforeEach(function () {
+    RolePlateforme::query()->updateOrCreate(
+        ['code' => 'ADMIN_PLATEFORME'],
+        ['nom' => 'Administrateur plateforme'],
+    );
     $admin = UtilisateurPlateforme::factory()->create(['actif' => true]);
+    $admin->roles()->syncWithoutDetaching(['ADMIN_PLATEFORME']);
     $this->withToken($admin->createToken('calendar-test', ['context:platform'])->plainTextToken);
 });
 
