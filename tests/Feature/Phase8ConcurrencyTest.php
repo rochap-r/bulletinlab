@@ -31,7 +31,16 @@ use Illuminate\Support\Str;
 uses(RefreshDatabase::class);
 
 beforeEach(function () {
-    $this->concurrencyPdo = connectToConcurrencyDatabase();
+    try {
+        $this->concurrencyPdo = connectToConcurrencyDatabase();
+    } catch (RuntimeException $exception) {
+        $this->concurrencyPdo = null;
+
+        skip(sprintf(
+            'Concurrency test database is unavailable: %s',
+            $exception->getMessage(),
+        ));
+    }
 });
 
 afterEach(function () {
