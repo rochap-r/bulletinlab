@@ -370,6 +370,9 @@ deploy_release() {
     update_repository "$APP_DIR" "$EXPECTED_BACKEND_SHA"
     update_repository "$FRONTEND_DIR" "$EXPECTED_FRONTEND_SHA"
 
+    # Validate the Compose file from the requested backend revision, not the stale server checkout.
+    validate_compose_project
+
     BACKEND_SHA="$(git -C "$APP_DIR" rev-parse HEAD)"
     FRONTEND_SHA="$(git -C "$FRONTEND_DIR" rev-parse HEAD)"
 
@@ -421,9 +424,9 @@ main() {
     check_prerequisites
     acquire_lock
     cd "$APP_DIR"
-    validate_compose_project
 
     if [[ "$ROLLBACK_ONLY" == true ]]; then
+        validate_compose_project
         manual_rollback
     else
         deploy_release
