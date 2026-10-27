@@ -5,6 +5,12 @@ set -Eeuo pipefail
 APP_DIR="${APP_DIR:-/opt/topscolaire}"
 FRONTEND_DIR="${FRONTEND_DIR:-${APP_DIR}/frontend}"
 ENV_FILE="${ENV_FILE:-${APP_DIR}/.env.production}"
+
+# Robustesse : si ENV_FILE vient de l'environnement serveur mais pointe vers
+# un fichier introuvable, basculer sur .env.production (présent sur prod).
+if [[ ! -f "$ENV_FILE" && -f "${APP_DIR}/.env.production" ]]; then
+    ENV_FILE="${APP_DIR}/.env.production"
+fi
 BACKUP_DIR="${BACKUP_DIR:-/opt/backups/topscolaire}"
 EXPECTED_BACKEND_SHA="${EXPECTED_BACKEND_SHA:-}"
 EXPECTED_FRONTEND_SHA="${EXPECTED_FRONTEND_SHA:-}"

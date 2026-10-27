@@ -228,7 +228,7 @@ jobs:
           fi
 
           printf -v remote_command \
-            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q AUTO_ROLLBACK=true bash -s' \
+            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q AUTO_ROLLBACK=true ENV_FILE=/opt/topscolaire/.env.production bash -s' \
             "$EXPECTED_BACKEND_SHA" "$EXPECTED_FRONTEND_SHA"
 
           ssh \
