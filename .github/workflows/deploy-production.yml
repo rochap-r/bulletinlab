@@ -116,6 +116,7 @@ jobs:
         run: |
           cat > .env.production <<'EOF'
           COMPOSE_PROJECT_NAME=topscolaire
+          ENV_FILE=.env.production
           IMAGE_TAG=scan
           APP_NAME=TopScolaire
           APP_ENV=production
