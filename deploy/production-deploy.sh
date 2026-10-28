@@ -587,6 +587,34 @@ docker image inspect "bulletinlab/api:$NEW_TAG" >/dev/null ||
 docker image inspect "bulletinlab/frontend:$NEW_TAG" >/dev/null ||
   fail "Image frontend construite introuvable"
 
+log "Vérification de la lisibilité des fichiers PHP dans l’image API"
+docker run --rm \
+  --user www-data \
+  --entrypoint php \
+  "bulletinlab/api:$NEW_TAG" \
+  -r '
+    $files = [
+      "/var/www/html/config/database.php",
+      "/var/www/html/app/Http/Resources/Api/V1/Platform/Configuration/ConfigurationBulletinResource.php",
+      "/var/www/html/routes/api.php",
+      "/var/www/html/bootstrap/app.php",
+      "/var/www/html/database/seeders/DatabaseSeeder.php",
+      "/var/www/html/resources/views/welcome.blade.php",
+      "/var/www/html/public/index.php",
+      "/var/www/html/vendor/autoload.php",
+      "/var/www/html/artisan",
+    ];
+
+    foreach ($files as $file) {
+      if (! is_readable($file)) {
+        fwrite(STDERR, "Fichier illisible : {$file}\n");
+        exit(1);
+      }
+    }
+
+    echo "Permissions PHP vérifiées\n";
+  '
+
 check_database
 verify_seeder_class
 

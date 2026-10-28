@@ -80,6 +80,15 @@ RUN php artisan package:discover --ansi
 COPY docker/api/entrypoint.sh /usr/local/bin/app-entrypoint
 RUN sed -i 's/\r$//' /usr/local/bin/app-entrypoint \
     && chmod +x /usr/local/bin/app-entrypoint \
+    && find /var/www/html/app /var/www/html/config /var/www/html/routes \
+        /var/www/html/bootstrap /var/www/html/database /var/www/html/resources \
+        /var/www/html/public /var/www/html/vendor \
+        -type d -exec chmod 755 {} + \
+    && find /var/www/html/app /var/www/html/config /var/www/html/routes \
+        /var/www/html/bootstrap /var/www/html/database /var/www/html/resources \
+        /var/www/html/public /var/www/html/vendor \
+        -type f -exec chmod 644 {} + \
+    && chmod 644 /var/www/html/artisan \
     && chown -R www-data:www-data storage bootstrap/cache
 
 EXPOSE 9000
