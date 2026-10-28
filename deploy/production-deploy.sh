@@ -609,15 +609,22 @@ check_database
 # 11. SEEDER DE PRODUCTION IDEMPOTENT
 # ============================================
 
-log "Synchronisation des référentiels de production"
+# Seeders désactivés par défaut
+RUN_REFERENCE_SEEDER="${RUN_REFERENCE_SEEDER:-false}"
 
-compose run --rm --no-deps api \
-  php artisan db:seed \
-  --class='Database\Seeders\ProductionReferenceSeeder' \
-  --force \
-  --no-interaction
+if [[ "$RUN_REFERENCE_SEEDER" == "true" ]]; then
+  log "Synchronisation des référentiels de production"
 
-check_database
+  compose run --rm --no-deps api \
+    php artisan db:seed \
+    --class='Database\Seeders\ProductionReferenceSeeder' \
+    --force \
+    --no-interaction
+
+  check_database
+else
+  log "Aucun seeder exécuté pour ce déploiement"
+fi
 
 # ============================================
 # 12. MISE EN SERVICE DES NOUVELLES IMAGES

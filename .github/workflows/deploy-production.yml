@@ -30,6 +30,11 @@ on:
         required: false
         type: boolean
         default: false
+      run_reference_seeder:
+        description: "Exécuter les seeders de production"
+        required: false
+        type: boolean
+        default: false
       redeploy_api_nginx:
         description: Apply an explicitly reviewed api-nginx infrastructure change
         required: false
@@ -258,6 +263,7 @@ jobs:
           EXPECTED_BACKEND_SHA: ${{ github.sha }}
           EXPECTED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
           APPROVE_MIGRATIONS: ${{ inputs.approve_migrations }}
+          RUN_REFERENCE_SEEDER: ${{ inputs.run_reference_seeder }}
           BOOTSTRAP_DATABASE_IDENTITY: ${{ inputs.bootstrap_database_identity }}
           REDEPLOY_API_NGINX: ${{ inputs.redeploy_api_nginx }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
@@ -269,9 +275,15 @@ jobs:
           fi
 
           printf -v remote_command \
-            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q APPROVE_MIGRATIONS=%q BOOTSTRAP_DATABASE_IDENTITY=%q REDEPLOY_API_NGINX=%q ENV_FILE=/opt/topscolaire/.env.production bash -s' \
-            "$EXPECTED_BACKEND_SHA" "$EXPECTED_FRONTEND_SHA" "$APPROVE_MIGRATIONS" "$BOOTSTRAP_DATABASE_IDENTITY" "$REDEPLOY_API_NGINX"
-
+          'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q APPROVE_MIGRATIONS=%q BOOTSTRAP_DATABASE_IDENTITY=%q REDEPLOY_API_NGINX=%q RUN_REFERENCE_SEEDER=%q ENV_FILE=%q bash -s' \
+          "$EXPECTED_BACKEND_SHA" \
+          "$EXPECTED_FRONTEND_SHA" \
+          "${APPROVE_MIGRATIONS:-false}" \
+          "${BOOTSTRAP_DATABASE_IDENTITY:-false}" \
+          "${REDEPLOY_API_NGINX:-false}" \
+          "${RUN_REFERENCE_SEEDER:-false}" \
+          "/opt/topscolaire/.env.production"
+          
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
