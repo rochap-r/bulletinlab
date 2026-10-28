@@ -16,6 +16,8 @@ use App\Domains\Bulletin\Services\RankBulletinsService;
 use App\Domains\Bulletin\Services\ResolveMentionDecisionService;
 use App\Domains\Membership\Contracts\InvitationServiceInterface;
 use App\Domains\Membership\Services\InvitationService;
+use App\Domains\Responsable\Contracts\ResponsableAuthServiceInterface;
+use App\Domains\Responsable\Services\ResponsableAuthService;
 use App\Domains\Student\Contracts\ImportStudentsServiceInterface;
 use App\Domains\Student\Services\ImportStudentsService;
 use App\Domains\Teacher\Contracts\AssignCourseTeacherServiceInterface;
@@ -31,6 +33,8 @@ use App\Domains\Tenant\Services\IdempotencyService;
 use App\Domains\Tenant\Services\TenantRegistrationService;
 use App\Domains\Tenant\Services\TenantService;
 use App\Domains\Tenant\Services\TenantValidationService;
+use App\Models\Eleve;
+use App\Observers\EleveObserver;
 use App\Support\PhoneNumberNormalizer;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Model;
@@ -85,6 +89,7 @@ class AppServiceProvider extends ServiceProvider
             AssignCourseTeacherService::class,
         );
         $this->app->bind(InvitationServiceInterface::class, InvitationService::class);
+        $this->app->bind(ResponsableAuthServiceInterface::class, ResponsableAuthService::class);
     }
 
     public function boot(): void
@@ -95,6 +100,8 @@ class AppServiceProvider extends ServiceProvider
             ->letters()
             ->mixedCase()
             ->numbers());
+
+        Eleve::observe(EleveObserver::class);
 
         $this->logSlowQueries();
 
@@ -128,6 +135,32 @@ class AppServiceProvider extends ServiceProvider
                 Limit::perMinute(30)->by('ip:'.hash('sha256', (string) $request->ip())),
                 Limit::perMinute(5)->by('credential:'.hash('sha256', $credentialKey)),
             ];
+        });
+
+        RateLimiter::for('responsable.auth.login', function (Request $request): array {
+            $identifiant = trim((string) $request->input('telephone'));
+
+            try {
+                $identifiant = PhoneNumberNormalizer::normalize($identifiant);
+            } catch (\InvalidArgumentException) {
+            }
+
+            $credentialKey = implode('|', [
+                Str::lower($identifiant),
+                $request->ip(),
+            ]);
+
+            return [
+                Limit::perMinute(30)->by('ip:'.hash('sha256', (string) $request->ip())),
+                Limit::perMinute(5)->by('responsable:'.hash('sha256', $credentialKey)),
+            ];
+        });
+
+        RateLimiter::for('responsable.password', function (Request $request): Limit {
+            return Limit::perMinute(5)->by(
+                'responsable:'.($request->user()?->getAuthIdentifier() ?? 'guest')
+                .'|ip:'.hash('sha256', (string) $request->ip())
+            );
         });
 
         RateLimiter::for('me.password', function (Request $request): Limit {

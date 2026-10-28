@@ -4751,7 +4751,8 @@ test('management atomically replaces a course teacher and replays the same assig
     $this->withToken($teacherToken)
         ->putJson($noteUri, ['valeur' => 16])
         ->assertOk()
-        ->assertJsonPath('data.note.valeur', '16.00');
+        ->assertJsonPath('data.note.valeur', '16.00')
+        ->assertJsonPath('data.note.origine', 'DIRECTE');
 });
 
 test('course assignment fails closed across class course teacher and role boundaries', function () {

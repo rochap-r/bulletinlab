@@ -8,6 +8,8 @@ use App\Http\Middleware\PeriodeOuverteMiddleware;
 use App\Http\Middleware\PlatformMiddleware;
 use App\Http\Middleware\RequestLogging;
 use App\Http\Middleware\RequirePasswordChange;
+use App\Http\Middleware\RequireResponsablePasswordChange;
+use App\Http\Middleware\ResponsableMiddleware;
 use App\Http\Middleware\SecurityHeaders;
 use App\Http\Middleware\TenantMiddleware;
 use App\Http\Middleware\TenantValidatedMiddleware;
@@ -40,6 +42,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'tenant' => TenantMiddleware::class,
             'tenant.validated' => TenantValidatedMiddleware::class,
             'require.password.change' => RequirePasswordChange::class,
+            'responsable' => ResponsableMiddleware::class,
+            'responsable.password.change' => RequireResponsablePasswordChange::class,
             'periode.ouverte' => PeriodeOuverteMiddleware::class,
             'tenant.role' => EnsureTenantRole::class,
             'tenant.permission' => EnsureTenantPermission::class,

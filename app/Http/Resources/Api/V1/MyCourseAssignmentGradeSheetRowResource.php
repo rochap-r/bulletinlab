@@ -37,6 +37,7 @@ final class MyCourseAssignmentGradeSheetRowResource extends JsonResource
                     'lock_version' => $note->lock_version,
                     'statut_resultat' => $note->statut_resultat->value,
                     'valeur' => $note->valeur,
+                    'origine' => $note->origine->value,
                     'commentaire' => $note->commentaire,
                     'date_saisie' => $note->date_saisie?->toISOString(),
                 ]

@@ -13,6 +13,8 @@ final class AccessTokenCookies
 
     public const PLATFORM = 'topscolaire_platform_session';
 
+    public const RESPONSABLE = 'topscolaire_responsable_session';
+
     public const TRANSPORT_HEADER = 'X-Auth-Mode';
 
     public const COOKIE_TRANSPORT = 'cookie';
@@ -34,6 +36,10 @@ final class AccessTokenCookies
 
         if ($request->is('api/v1/platform/*')) {
             return self::PLATFORM;
+        }
+
+        if ($request->is('api/v1/responsables/*')) {
+            return self::RESPONSABLE;
         }
 
         return self::TENANT;

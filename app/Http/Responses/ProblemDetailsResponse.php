@@ -11,6 +11,7 @@ use App\Domains\Evaluation\Exceptions\PeriodLockedException;
 use App\Domains\Membership\Exceptions\InvitationConflictException;
 use App\Domains\Membership\Exceptions\InvitationNotFoundException;
 use App\Domains\Referentiel\Exceptions\ReferentielConflictException;
+use App\Domains\Responsable\Exceptions\ResponsableAuthenticationException;
 use App\Domains\SchoolYear\Exceptions\SchoolYearException;
 use App\Domains\Student\Exceptions\EnrollmentConflictException;
 use App\Domains\Student\Exceptions\StudentArchiveConflictException;
@@ -87,7 +88,8 @@ final class ProblemDetailsResponse
             $exception instanceof ValidationException => Response::HTTP_UNPROCESSABLE_ENTITY,
             $exception instanceof AuthenticationException,
             $exception instanceof DomainAuthenticationException,
-            $exception instanceof PlatformAuthenticationException => Response::HTTP_UNAUTHORIZED,
+            $exception instanceof PlatformAuthenticationException,
+            $exception instanceof ResponsableAuthenticationException => Response::HTTP_UNAUTHORIZED,
             $exception instanceof AuthorizationException => Response::HTTP_FORBIDDEN,
             $exception instanceof PeriodLockedException => Response::HTTP_LOCKED,
             $exception instanceof NoteVersionConflictException => Response::HTTP_CONFLICT,

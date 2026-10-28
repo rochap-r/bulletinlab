@@ -20,6 +20,9 @@ class NoteResource extends JsonResource
             'lock_version' => $this->lock_version,
             'statut_resultat' => $this->statut_resultat->value,
             'valeur' => $this->valeur,
+            'origine' => $this->origine->value,
+            'calcul_version' => $this->calcul_version,
+            'calculee_at' => $this->calculee_at,
             'commentaire' => $this->commentaire,
             'date_saisie' => $this->date_saisie,
             'eleve' => $this->when(

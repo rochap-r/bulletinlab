@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Domains\Evaluation\Enums\NoteResultStatus;
+use App\Enums\NoteOrigine;
 use App\Models\Concerns\HasPublicId;
 use App\Models\Concerns\HasTenant;
 use Illuminate\Database\Eloquent\Builder;
@@ -32,6 +33,10 @@ class Note extends Model
         'saisie_par',
         'date_saisie',
         'commentaire',
+        'origine',
+        'calcul_version',
+        'calcul_hash',
+        'calculee_at',
     ];
 
     protected $casts = [
@@ -39,6 +44,8 @@ class Note extends Model
         'lock_version' => 'integer',
         'valeur' => 'decimal:2',
         'date_saisie' => 'datetime',
+        'origine' => NoteOrigine::class,
+        'calculee_at' => 'datetime',
     ];
 
     public function tenant(): BelongsTo

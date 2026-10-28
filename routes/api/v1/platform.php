@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Platform\ResponsableMonitoringController;
 use App\Http\Controllers\Api\V1\PlatformAuth\PlatformLoginController;
 use App\Http\Controllers\Api\V1\PlatformAuth\PlatformLogoutAllController;
 use App\Http\Controllers\Api\V1\PlatformAuth\PlatformLogoutController;
@@ -19,6 +20,9 @@ Route::middleware(['auth.cookie', 'auth:sanctum', 'platform', 'throttle:api'])->
 
     Route::get('platform/me', PlatformMeController::class)
         ->name('platform.me');
+
+    Route::get('platform/responsables/monitoring', ResponsableMonitoringController::class)
+        ->name('platform.responsables.monitoring');
 
     require __DIR__.'/platform-config.php';
 });

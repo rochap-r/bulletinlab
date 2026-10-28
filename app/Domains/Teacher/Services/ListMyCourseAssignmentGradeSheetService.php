@@ -91,6 +91,7 @@ final class ListMyCourseAssignmentGradeSheetService
                         'lock_version',
                         'statut_resultat',
                         'valeur',
+                        'origine',
                         'commentaire',
                         'date_saisie',
                     ])

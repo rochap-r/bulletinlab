@@ -40,6 +40,7 @@ final class TenantController extends Controller
             'slug' => $this->uniqueSlug($data['nom_espace']),
             'type_tenant' => $data['type_tenant'],
             'statut' => $data['statut'] ?? 'ESSAI',
+            'espace_parents_actif' => $data['espace_parents_actif'] ?? true,
         ]);
 
         return TenantResource::make($tenant->loadCount('etablissements'))
@@ -72,6 +73,7 @@ final class TenantController extends Controller
             'nom_espace' => $data['nom_espace'],
             'type_tenant' => $data['type_tenant'],
             'statut' => $data['statut'] ?? $tenantModel->statut,
+            'espace_parents_actif' => $data['espace_parents_actif'] ?? $tenantModel->espace_parents_actif,
         ]);
 
         return TenantResource::make($tenantModel->refresh()->loadCount('etablissements'))

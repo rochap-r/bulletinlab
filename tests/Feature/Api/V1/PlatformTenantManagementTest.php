@@ -154,11 +154,15 @@ test('a tenant can be updated', function () {
             'nom_espace' => 'Complexe Epsilon Révisé',
             'type_tenant' => 'GROUPE_ECOLES',
             'statut' => 'SUSPENDU',
+            'espace_parents_actif' => false,
         ])
         ->assertOk()
         ->assertJsonPath('data.nom_espace', 'Complexe Epsilon Révisé')
         ->assertJsonPath('data.type_tenant', 'GROUPE_ECOLES')
-        ->assertJsonPath('data.statut', 'SUSPENDU');
+        ->assertJsonPath('data.statut', 'SUSPENDU')
+        ->assertJsonPath('data.espace_parents_actif', false);
+
+    expect($tenant->fresh()->espace_parents_actif)->toBeFalse();
 });
 
 test('updating a tenant cannot bypass the validation flow', function () {

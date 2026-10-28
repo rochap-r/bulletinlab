@@ -23,7 +23,7 @@ x-api-service: &api-service
     context: .
     dockerfile: docker/api/Dockerfile
   env_file:
-    - ${ENV_FILE:-.env.docker}
+    - ${ENV_FILE:-.env.production}
   init: true
   networks:
     - backend

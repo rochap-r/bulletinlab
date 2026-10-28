@@ -25,6 +25,7 @@ final class PlatformTenantRequest extends FormRequest
             // Les statuts de validation (EN_ATTENTE, ACTIF, REFUSE) transitent
             // exclusivement par activation / refus / réexamen (audités).
             'statut' => ['nullable', Rule::in(['ESSAI', 'SUSPENDU', 'RESILIE'])],
+            'espace_parents_actif' => ['sometimes', 'boolean'],
         ];
     }
 

@@ -4,6 +4,7 @@ namespace App\Domains\Evaluation\Services;
 
 use App\Domains\Evaluation\Enums\NoteResultStatus;
 use App\Domains\Evaluation\Exceptions\NoteVersionConflictException;
+use App\Enums\NoteOrigine;
 use App\Models\Note;
 use Carbon\CarbonInterface;
 
@@ -33,6 +34,10 @@ final class UpdateVersionedNoteService
                 'saisie_par' => $actorId,
                 'date_saisie' => $recordedAt,
                 'commentaire' => $comment,
+                'origine' => NoteOrigine::Directe->value,
+                'calcul_version' => null,
+                'calcul_hash' => null,
+                'calculee_at' => null,
                 'lock_version' => $expectedVersion + 1,
                 'updated_at' => $recordedAt,
             ]);

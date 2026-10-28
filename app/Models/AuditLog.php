@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class AuditLog extends Model
 {
@@ -11,6 +12,7 @@ class AuditLog extends Model
     protected $fillable = [
         'tenant_id',
         'utilisateur_id',
+        'responsable_id',
         'action',
         'table_cible',
         'ligne_cible_id',
@@ -24,4 +26,9 @@ class AuditLog extends Model
         'anciennes_valeurs' => 'array',
         'nouvelles_valeurs' => 'array',
     ];
+
+    public function responsable(): BelongsTo
+    {
+        return $this->belongsTo(Responsable::class);
+    }
 }

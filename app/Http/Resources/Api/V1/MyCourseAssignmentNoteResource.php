@@ -37,6 +37,7 @@ final class MyCourseAssignmentNoteResource extends JsonResource
                 'lock_version' => $result->note->lock_version,
                 'statut_resultat' => $result->note->statut_resultat->value,
                 'valeur' => $result->note->valeur,
+                'origine' => $result->note->origine->value,
                 'commentaire' => $result->note->commentaire,
                 'date_saisie' => $result->note->date_saisie?->toISOString(),
             ],

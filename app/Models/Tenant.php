@@ -16,12 +16,14 @@ class Tenant extends Model
         'slug',
         'type_tenant',
         'statut',
+        'espace_parents_actif',
         'valide_at',
         'valide_par_id',
         'motif_refus',
     ];
 
     protected $casts = [
+        'espace_parents_actif' => 'boolean',
         'valide_at' => 'datetime',
     ];
 

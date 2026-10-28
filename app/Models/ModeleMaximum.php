@@ -30,4 +30,14 @@ class ModeleMaximum extends Model
     {
         return $this->belongsTo(ModelePeriode::class);
     }
+
+    public function modeleBulletin(): BelongsTo
+    {
+        return $this->belongsTo(ModeleBulletin::class);
+    }
+
+    public function node(): BelongsTo
+    {
+        return $this->belongsTo(ModeleNode::class);
+    }
 }

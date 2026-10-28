@@ -20,6 +20,7 @@ class TenantResource extends JsonResource
             'slug' => $this->slug,
             'type_tenant' => $this->type_tenant,
             'statut' => $this->statut,
+            'espace_parents_actif' => (bool) $this->espace_parents_actif,
             'valide_at' => $this->valide_at?->toIso8601String(),
             'valide_par_id' => $this->valide_par_id,
             'valide_par' => $this->whenLoaded('validePar', fn (): ?array => $this->validePar === null ? null : [

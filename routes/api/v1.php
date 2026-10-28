@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 require __DIR__.'/v1/auth.php';
 require __DIR__.'/v1/platform.php';
 require __DIR__.'/v1/public.php';
+require __DIR__.'/v1/responsables.php';
 
 Route::middleware(['auth.cookie', 'auth:sanctum', 'throttle:api', 'tenant'])->group(function (): void {
     require __DIR__.'/v1/establishments.php';

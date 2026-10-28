@@ -8,6 +8,7 @@ use App\Domains\Evaluation\Exceptions\NoteVersionConflictException;
 use App\Domains\Evaluation\Services\UpdateVersionedNoteService;
 use App\Domains\Teacher\DTOs\UpsertedCourseAssignmentNote;
 use App\Domains\Teacher\Exceptions\TeacherNoteEntryConflictException;
+use App\Enums\NoteOrigine;
 use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
 use App\Models\Bulletin;
@@ -98,6 +99,7 @@ final class UpsertMyCourseAssignmentNoteService
             }
 
             if ($existingNote instanceof Note
+                && $existingNote->origine === NoteOrigine::Directe
                 && $existingNote->statut_resultat === $status
                 && $existingNote->valeur === $normalizedValue
                 && $existingNote->commentaire === $normalizedComment) {
@@ -168,6 +170,7 @@ final class UpsertMyCourseAssignmentNoteService
                 'saisie_par' => $teacher->getKey(),
                 'date_saisie' => now(),
                 'commentaire' => $normalizedComment,
+                'origine' => NoteOrigine::Directe,
             ]);
             $this->progressService->update($context, $teacher);
 

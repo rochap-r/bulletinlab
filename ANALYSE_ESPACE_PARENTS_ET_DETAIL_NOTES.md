@@ -1,9 +1,9 @@
 # Analyse de faisabilité — Espace Parents Multi-Écoles + Détail des notes par période
 
 **Projet :** BulletinLab / TopScolaire  
-**Date :** 26 octobre 2026  
-**Auteur :** Analyse technique (IA)  
-**Statut :** Proposition — aucune modification de code apportée  
+**Date :** 27 octobre 2026
+**Version :** 2.1
+**Statut :** Phases 1 à 6 implémentées — espace parents multi-écoles, détail pédagogique des notes, interface enseignant des évaluations, audit, feature flags, PWA offline et monitoring ; seul le guide utilisateur parent (optionnel) reste à rédiger
 
 ---
 
@@ -16,6 +16,18 @@ Le dirigeant de l'école a soulevé deux attentes majeures :
 2. **Détail des notes par période** : pour le secondaire (et potentiellement le primaire), une période n'est pas une note unique. Elle est constituée de plusieurs composantes saisies par l'enseignant : interrogations, exercices, devoirs, cotation des cahiers. Le système doit agréger ces composantes pour former les points de la période, et les parents doivent pouvoir consulter ce détail (ex. : "interrogation ratée, devoir réussi").
 
 Ce document analyse la faisabilité technique, propose une architecture, un plan de mise en œuvre par phases, et intègre une **dimension industrielle** (bonnes pratiques SaaS multi-tenant, sécurité, audit, observabilité).
+
+### Décisions d’architecture confirmées
+
+La première analyse confirmait correctement la faisabilité, mais trois points devaient être durcis avant l’implémentation :
+
+1. `Parent` ne peut pas être le nom d’un modèle PHP, car `parent` est un mot réservé. Le domaine utilise désormais **`Responsable`**.
+2. Une identité multi-écoles ne doit pas porter de `tenant_id`. Le compte `Responsable` est global ; seul son lien avec un élève est tenant-scopé.
+3. Selon la décision produit du 27/10/2026, `eleves.telephone_parent` est la source de rattachement automatique. Un même numéro normalisé regroupe donc les enfants de toutes les écoles TopScolaire.
+4. Le compte est initialisé avec le mot de passe temporaire `123456`. La première session ne peut consulter aucun enfant tant que le parent ne l’a pas remplacé par un mot de passe d’au moins 6 caractères.
+5. Ce compromis simplifie fortement l’accès, mais la connaissance du numéro et du mot de passe commun suffit à la première connexion. Le produit doit donc conserver le throttling, l’audit, la révocation immédiate de l’ancien jeton et prévoir une authentification plus forte à terme.
+
+Le périmètre pédagogique de ce document reste le **secondaire**. Le primaire sera spécifié séparément avant de coder ses règles de calcul.
 
 ---
 
@@ -30,23 +42,23 @@ Ce document analyse la faisabilité technique, propose une architecture, un plan
 | Authentification staff | `Utilisateur` + Sanctum + rôles Spatie | ✅ Existant | Pattern à réutiliser pour les parents (option A) ou compte dédié (option B) |
 | Multi-tenant par téléphone | `telephone_normalise` + rattachement inter-tenant | ✅ Documenté (AUTHENTIFICATION_ROLES_V2.md §6) | Pattern déjà validé pour les enseignants, transposable aux parents |
 | Bulletins et notes | `bulletins`, `notes`, `modele_periodes`, `modele_nodes` | ✅ Existant | Une note = 1 valeur par (bulletin, node, periode) |
-| API REST versionnée | `routes/api/v1/*` | ✅ Existant | Endpoints parents à ajouter sous `api/v1/parents.php` |
-| Frontend React + TypeScript | `frontend/src/` | ✅ Existant | Pages `/parent/*` à créer |
+| API REST versionnée | `routes/api/v1/*` | ✅ Existant | Endpoints parents implémentés sous `routes/api/v1/responsables.php` |
+| Frontend React + TypeScript | `frontend/src/` | ✅ Existant | Portail `/parents/*` implémenté |
 
 ### 2.2 Ce qui manque (écarts à combler)
 
 | Écran / Fonction | Statut |
 |------------------|--------|
-| Modèle `Parent` dédié | ❌ Absent |
-| Table de liaison `parent_eleve` (N:M) | ❌ Absent |
-| Rôle `PARENT` | ❌ Absent (Spatie) |
-| Authentification parent (login/inscription) | ❌ Absent |
-| Endpoints API parents | ❌ Absent |
-| Pages frontend `/parent/*` | ❌ Absent |
-| Garde d'authentification parent | ❌ Absent |
-| Composantes de note (interrogation, devoir, exercice, cahier) | ❌ Absent — une `Note` stocke une seule `valeur` par période |
-| Agrégation des composantes vers la période | ❌ Absent |
-| Vue détail des notes pour les parents | ❌ Absent |
+| Modèle `Responsable` global dédié | ✅ Ajouté sans `tenant_id` |
+| Liaison riche `lien_responsable_eleves` | ✅ Fondations ajoutées le 27/10/2026 |
+| Rôle `PARENT` staff | Non requis : le portail utilise un modèle et un contexte Sanctum séparés |
+| Authentification parent par téléphone + mot de passe initial | ✅ Backend ajouté le 27/10/2026 |
+| Endpoints API profil/enfants/session | ✅ Backend ajouté sous `/api/v1/responsables/*` |
+| Pages frontend `/parents/*` | ✅ Connexion, changement initial, tableau de bord et fiche enfant ajoutés |
+| Garde d'authentification parent | ✅ Sanctum + capacité `context:responsable` + changement initial obligatoire |
+| Composantes de note (interrogation, devoir, exercice, cahier) | ✅ Tables `types_evaluations`, `evaluations`, `resultats_evaluations`, modèles, enums et seeder (itération 4.1) |
+| Agrégation des composantes vers la période | ✅ `EvaluationCalculationService` (compute + forInscription, DTO `EvaluationAggregate`, 4 tests unitaires) — itération 4.2 |
+| Vue détail des notes pour les parents | ✅ Endpoint parent et affichage dans la fiche enfant (itérations 4.4 et 5.2) |
 
 ---
 
@@ -54,80 +66,93 @@ Ce document analyse la faisabilité technique, propose une architecture, un plan
 
 ### 3.1 Principe architectural
 
-Le projet applique déjà le pattern **"1 identité humaine = 1 numéro de téléphone vérifié, N appartenances"** (voir `AUTHENTIFICATION_ROLES_V2.md` §3). Pour les parents, deux options s'offrent à nous :
+Le projet applique déjà le pattern **"1 identité humaine = 1 numéro de téléphone vérifié, N appartenances"** (voir `AUTHENTIFICATION_ROLES_V2.md` §3). Pour les responsables, deux options s'offrent à nous :
 
 | Option | Description | Recommandation |
 |--------|-------------|----------------|
-| **A — Compte `Parent` dédié** | Table `parents` propre, table de liaison `parent_eleve`, token parent scopé ou global | ✅ Recommandée. Propre, isolée des staff, évolutive. |
+| **A — Compte `Responsable` global dédié** | Table `responsables` sans `tenant_id`, liens tenant-scopés avec les élèves, session globale | ✅ Recommandée. Propre, isolée du staff, réellement multi-écoles. |
 | **B — Réutiliser `Utilisateur` + rôle `PARENT`** | Un parent est un `Utilisateur` avec rôle `PARENT`, liaison via `telephone_parent` sur `Eleve` | ❌ Déconseillée. Mélange staff/parents, permissions ambiguës, moins sécurisé. |
 
-**Architecture retenue : Option A (compte `Parent` dédié).**
+**Architecture retenue : Option A (identité `Responsable` globale).**
 
 ### 3.2 Modèle de données proposé
 
-#### Table `parents`
+#### Table `responsables`
 
 ```sql
-parents (
+responsables (
     id BIGINT PK,
-    tenant_id BIGINT FK -> tenants (cascade),          -- tenant de rattachement principal (si lié à une école)
-    telephone VARCHAR(30) UNIQUE,                      -- téléphone brut saisi
-    telephone_normalise VARCHAR(30) UNIQUE INDEX,      -- E.164 (+243...), identité pivot
+    public_id ULID UNIQUE,
+    telephone VARCHAR(30),
+    telephone_normalise VARCHAR(16) UNIQUE,            -- E.164 (+243...), identité pivot globale
     nom VARCHAR(100),
     postnom VARCHAR(100) NULL,
     prenom VARCHAR(100),
     email VARCHAR(150) NULL,
     adresse TEXT NULL,
-    sexe ENUM('M','F') NULL,
-    mot_de_passe VARCHAR(255),
+    mot_de_passe VARCHAR(255) NULL,                    -- hash uniquement
+    doit_changer_mot_de_passe BOOLEAN DEFAULT TRUE,
     actif BOOLEAN DEFAULT TRUE,
-    doit_changer_mot_de_passe BOOLEAN DEFAULT FALSE,
     derniere_connexion_at DATETIME NULL,
-    email_verified_at DATETIME NULL,
+    telephone_verifie_at DATETIME NULL,
     created_at, updated_at
 )
 ```
 
-#### Table `parent_eleve` (liaison N:M)
+Le compte ne porte volontairement aucun `tenant_id`. Il peut donc agréger les liens vérifiés provenant de plusieurs écoles sans dupliquer mot de passe et identité.
+
+#### Table `lien_responsable_eleves` (liaison riche)
 
 ```sql
-parent_eleve (
+lien_responsable_eleves (
     id BIGINT PK,
-    parent_id BIGINT FK -> parents (cascade),
+    public_id ULID UNIQUE,
+    responsable_id BIGINT FK -> responsables (cascade),
     eleve_id BIGINT FK -> eleves (cascade),
     tenant_id BIGINT FK -> tenants (cascade),          -- tenant de l'élève (isolation)
-    lien ENUM('PERE','MERE','TUTEUR') DEFAULT 'TUTEUR',
-    responsable_paiement BOOLEAN DEFAULT FALSE,
+    type_lien VARCHAR(20) DEFAULT 'TUTEUR',             -- PERE, MERE, TUTEUR, AUTRE
+    statut VARCHAR(20) DEFAULT 'EN_ATTENTE',            -- EN_ATTENTE, VERIFIE, REVOQUE
+    principal BOOLEAN DEFAULT FALSE,
+    peut_consulter_notes BOOLEAN DEFAULT TRUE,
+    peut_consulter_presences BOOLEAN DEFAULT TRUE,
     recevoir_notifications BOOLEAN DEFAULT TRUE,
-    actif BOOLEAN DEFAULT TRUE,
+    declare_par BIGINT NULL,
+    verifie_par BIGINT NULL,
+    verifie_at DATETIME NULL,
+    methode_verification VARCHAR(40) NULL,
+    revoque_par BIGINT NULL,
+    revoque_at DATETIME NULL,
+    motif_revocation TEXT NULL,
     created_at, updated_at,
-    UNIQUE (parent_id, eleve_id)
+    UNIQUE (responsable_id, eleve_id),
+    FOREIGN KEY (tenant_id, eleve_id) REFERENCES eleves(tenant_id, id)
 )
 ```
 
-**Règle d'isolation :** un `parent_eleve` n'existe que si `parent` et `eleve` appartiennent au même `tenant` OU si le parent est déclaré global (multi-tenant via `telephone_normalise`). Voir §3.4.
+**Règle d'isolation :** le responsable est global, mais chaque lien appartient obligatoirement au même tenant que l'élève. La contrainte composite le garantit aussi au niveau de la base. Seul un lien `VERIFIE`, non révoqué et autorisé pour la ressource demandée ouvre un accès.
 
 ### 3.3 Flux d'authentification et de rattachement
 
-#### Cas A : Parent déjà connu dans une école (socle existant)
+#### Cas A : Parent déjà connu dans une école
 L'élève a déjà `telephone_parent` renseigné lors de son inscription.
 
-1. L'école crée un compte parent (`POST /parents`) avec le téléphone de l'élève.
-2. Le système crée la ligne `parents` + la liaison `parent_eleve`.
-3. Le parent reçoit un mot de passe temporaire (affiché 1 fois) + changement forcé à la 1ère connexion.
+1. Le numéro est normalisé au format E.164 dans `eleves.telephone_parent_normalise`.
+2. Le système retrouve ou crée l’identité globale `responsables` et initialise son mot de passe avec le hash de `123456`.
+3. Un lien tenant-scopé est créé avec la méthode `DOSSIER_ELEVE` et le statut `VERIFIE`.
+4. Si le numéro du dossier élève change, l’ancien lien automatique est révoqué et le nouveau est créé.
 
 #### Cas B : Parent avec enfants dans plusieurs écoles (multi-tenant)
 Le parent se connecte avec son numéro de téléphone.
 
-1. `POST /auth/login-parent { telephone, password }` → le système recherche tous les `parent_eleve` liés à ce `telephone_normalise` dans **tous les tenants** où le parent est actif.
-2. Retourne la liste des enfants : `{ enfant, ecole, classe, annee_scolaire, tenant_id }`.
-3. Le parent choisit un enfant (ou une école) → le système renvoie un token scopé sur le tenant de cet enfant.
-4. Le parent peut switcher d'enfant/école sans se reconnecter (pattern `auth/switch` déjà existant pour les enseignants).
+1. `POST /api/v1/responsables/auth/login` reçoit `telephone` et `mot_de_passe`.
+2. À la première connexion, le parent utilise `123456` et reçoit un jeton limité au changement du mot de passe.
+3. `POST /api/v1/responsables/me/password-initial` exige un nouveau mot de passe confirmé d’au moins 6 caractères, différent de `123456`.
+4. Tous les anciens jetons sont révoqués et une nouvelle session de lecture est émise.
+5. `GET /api/v1/responsables/enfants` retourne les enfants autorisés avec leur école et leur classe, tous tenants confondus.
+6. Chaque futur endpoint métier devra revalider le lien, le tenant et la permission demandée.
 
 #### Cas C : Parent qui s'inscrit lui-même (portail public)
-1. `POST /public/parents` → création de compte parent avec téléphone.
-2. Le parent ajoute ses enfants manuellement en saisissant `num_permanent` + `telephone_parent` de chaque enfant.
-3. L'école valide le rattachement (ou le système valide automatiquement si `telephone_parent` correspond).
+L'inscription libre et la revendication manuelle d'un enfant sont reportées. Le rattachement est alimenté uniquement par le numéro saisi dans le dossier scolaire par une école TopScolaire.
 
 ### 3.4 Isolation et sécurité (règle d'or du projet)
 
@@ -137,11 +162,12 @@ Pour les parents multi-écoles, on introduit une **exception contrôlée** (allo
 
 | Opération | Lit hors tenant | Écrit hors tenant | Garde-fous |
 |-----------|-----------------|-------------------|------------|
-| `GET /public/parents/enfants?telephone=` | `parent_eleve` masqué (nom enfant, école, classe) | Rien | Throttle, réponse générique si inconnu, aucune donnée de notes |
-| `GET /parents/{id}/enfants` | Tous les enfants du parent dans son tenant courant | Rien | Token parent + policy `viewAny` |
-| `POST /auth/switch-parent {tenant_id}` | Appartenance du parent dans le tenant cible | Nouveau token `tenant:{id}` | Même `telephone_normalise` + actif, audit |
+| `POST /api/v1/responsables/auth/login` | Élèves correspondant au téléphone + identité globale | Synchronisation des liens et session | Réponse générique, double throttle, mot de passe hashé |
+| `POST /api/v1/responsables/me/password-initial` | Identité courante | Nouveau hash + révocation des anciens jetons | Minimum 6 caractères, confirmation, ancien mot de passe interdit, audit |
+| `GET /api/v1/responsables/enfants` | Liens vérifiés du responsable authentifié | Rien | Pas de `tenant_id` client, eager loading borné, identifiants publics uniquement |
+| `GET /api/v1/responsables/enfants/{public_id}/...` | Une ressource scolaire liée | Rien | À réaliser : policy objet responsable + lien + tenant + permission |
 
-**Interdit :** lister tous les élèves d'une école via un compte parent, modifier les notes d'un enfant d'un autre tenant, exposer le mot de passe.
+**Interdit :** retourner les enfants avant authentification et changement du mot de passe initial, lister les élèves d’une école sans lien, modifier les notes depuis l’espace parent ou accepter un `tenant_id` fourni par le client.
 
 ---
 
@@ -164,39 +190,75 @@ Le système doit :
 
 ### 4.2 Modèle de données proposé
 
-#### Table `evaluations` (composantes de note)
+#### Table `types_evaluations`
+
+Les catégories doivent être configurables et non figées dans un enum SQL. Les codes initiaux sont `INTERROGATION`, `EXERCICE`, `DEVOIR`, `CAHIER` et `AUTRE`, mais une école pourra ajouter « laboratoire » ou « projet ».
+
+#### Table `evaluations` (activité commune à une classe)
 
 ```sql
 evaluations (
     id BIGINT PK,
     tenant_id BIGINT FK -> tenants,
-    bulletin_id BIGINT FK -> bulletins,
-    node_id BIGINT FK -> modele_nodes,          -- matière/rubrique
+    etablissement_id BIGINT FK -> etablissements,
+    annee_scolaire_id BIGINT FK -> annees_scolaires,
+    classe_id BIGINT FK -> classes,
+    attribution_cours_id BIGINT FK -> attributions_cours,
+    node_id BIGINT FK -> modele_nodes,
     periode_id BIGINT FK -> modele_periodes,    -- T1, T2, examen...
-    type_evaluation ENUM('INTERROGATION','EXERCICE','DEVOIR','CAHIER','AUTRE'),
+    type_evaluation_id BIGINT FK -> types_evaluations,
     libelle VARCHAR(200),                       -- ex. "Interrogation n°1 - Géo"
-    valeur DECIMAL(8,2),                        -- note obtenue
     maxima DECIMAL(8,2),                        -- note max possible (ex. 10, 20)
     coefficient DECIMAL(6,2) DEFAULT 1,         -- poids dans le calcul de la période
-    date_evaluation DATE NULL,
-    saisi_par BIGINT FK -> utilisateurs,
+    date_evaluation DATE,
+    statut VARCHAR(20),                         -- BROUILLON, PUBLIEE, VERROUILLEE, ANNULEE
+    visible_parents_at DATETIME NULL,
+    cree_par BIGINT FK -> utilisateurs,
+    lock_version INTEGER DEFAULT 1,
     created_at, updated_at
 )
 ```
 
-#### Modification de la table `notes` (optionnelle)
+Une évaluation est créée une seule fois pour toute la classe. Elle ne référence donc pas directement un bulletin individuel.
+
+#### Table `resultats_evaluations` (résultat individuel)
+
+```sql
+resultats_evaluations (
+    id BIGINT PK,
+    tenant_id BIGINT FK -> tenants,
+    evaluation_id BIGINT FK -> evaluations,
+    inscription_id BIGINT FK -> inscriptions,
+    eleve_id BIGINT FK -> eleves,
+    statut_resultat VARCHAR(20),                -- SAISIE, ABSENTE, DISPENSEE, ANNULEE
+    valeur DECIMAL(8,2) NULL,
+    commentaire_parent TEXT NULL,
+    commentaire_interne TEXT NULL,
+    saisi_par BIGINT FK -> utilisateurs,
+    date_saisie DATETIME NULL,
+    lock_version INTEGER DEFAULT 1,
+    created_at, updated_at,
+    UNIQUE (evaluation_id, inscription_id)
+)
+```
+
+Séparer `evaluations` et `resultats_evaluations` évite de dupliquer le libellé, la date, le maximum et le coefficient pour chaque enfant. Cette structure correspond aussi au vocabulaire industriel catégories / activités (`LineItems`) / résultats de [OneRoster Gradebook](https://standards.1edtech.org/oneroster/?view=category).
+
+#### Projection vers la table `notes`
 
 Soit on garde `notes` comme note finale agrégée, soit on ajoute un champ `mode_calcul` :
 
 ```sql
 notes (
     ... colonnes existantes ...
-    mode_calcul ENUM('DIRECT','AGREGATION') DEFAULT 'DIRECT',  -- DIRECT = saisie manuelle, AGREGATION = calculée depuis evaluations
-    note_periode_calculee DECIMAL(8,2) NULL,                  -- résultat du calcul
+    origine VARCHAR(20) DEFAULT 'DIRECTE',     -- DIRECTE ou EVALUATIONS
+    calcul_version VARCHAR(40) NULL,
+    calcul_hash CHAR(64) NULL,
+    calculee_at DATETIME NULL
 )
 ```
 
-**Recommandation :** garder `notes` comme note finale de la période, et ajouter `evaluations` comme détail. La note de période est calculée en agrégeant `evaluations` (somme des `valeur * coefficient` / somme des `maxima * coefficient`, ou selon barème école).
+**Recommandation :** conserver `notes.valeur` comme projection finale consommée par le moteur de bulletin. Une école peut rester en saisie `DIRECTE` pendant la migration, puis passer à `EVALUATIONS` après validation de sa règle. Il ne faut pas ajouter une deuxième colonne de valeur qui créerait deux sources de vérité.
 
 ### 4.3 Règles de calcul (exemple secondaire)
 
@@ -207,11 +269,13 @@ Pour une période donnée (ex. Trimestre 1) et une matière (ex. Mathématiques)
 | Interrogation 1 | 7 | 10 | 1 | 7 |
 | Devoir maison | 14 | 20 | 1 | 14 |
 | Cahier | 15 | 15 | 0.5 | 7.5 |
-| **Total** | — | — | — | **28.5 / 45** |
+| **Total pondéré** | — | — | — | **28.5 / 37.5** |
 
-Note de période = 28.5 / 45 = 63.3%
+Ratio pondéré = `(7 + 14 + 15×0,5) / (10 + 20 + 15×0,5)` = `28,5 / 37,5` = `76 %`.
 
-Le barème (somme simple, moyenne pondérée, note sur 20, etc.) doit être configurable par école/tenant (`modele_maxima` existe déjà et peut être étendu).
+Si le maximum officiel de la période est 20, la note projetée est `15,20 / 20`.
+
+Le barème doit être configurable : catégories obligatoires ou facultatives, nombre minimal d'activités, coefficient par activité ou poids par catégorie, traitement des absences, arrondi et maximum officiel. Il ne faut pas coder en dur « exactement une interrogation + un devoir + un cahier ».
 
 ### 4.4 Primaire vs Secondaire
 
@@ -234,8 +298,8 @@ Pour enrichir l'analyse au-delà du simple développement fonctionnel, voici les
 ### 5.1 Multi-tenant & isolation
 
 - **Shared database, shared schema, tenant_id discriminator** (déjà appliqué). Chaque requête métier est filtrée par `tenant_id` via scope global.
-- **Row-level security (RLS)** au niveau base de données pour les tables sensibles (`notes`, `evaluations`, `parent_eleve`) en environnement de production critique.
-- **Token scoped** : `tenant:{id}` pour les staff, `parent:{id}` ou `tenant:{id}` selon le choix d'authentification parent. Jamais de token multi-tenant.
+- **Row-level security (RLS)** à évaluer au niveau base pour les tables sensibles (`notes`, `evaluations`, `lien_responsable_eleves`) lorsque l'exploitation le justifiera.
+- **Token scoped** : `tenant:{id}` pour le staff et `context:responsable` pour l’espace parent. Le jeton parent agrège uniquement les liens explicitement rattachés à son identité globale.
 
 ### 5.2 Audit & traçabilité (indispensable en éducation)
 
@@ -263,12 +327,16 @@ audit_logs (
 - Métriques : nombre de connexions parent/jour, temps de chargement du dashboard parent, taux d'erreur d'authentification.
 - Alerting sur les tentatives de rattachement anormales (ex. : même téléphone liant 50 élèves dans 10 écoles).
 
-### 5.5 RGPD & protection des données (enfants)
+### 5.5 Protection des données des enfants
 
-- Consentement explicite pour le rattachement parent-enfant.
-- Droit à l'oubli : suppression d'un parent supprime les liaisons `parent_eleve` mais pas les données scolaires de l'enfant (conservation légale).
-- Chiffrement des données sensibles (téléphone, email) au repos si exigé par la législation locale (RDC/OHADA).
-- Pas de stockage du mot de passe en clair, hash bcrypt/argon2.
+- Rattachement automatique et traçable depuis le numéro enregistré dans le dossier élève, conformément à la décision produit.
+- Révocation d'un lien sans suppression des données scolaires soumises à conservation.
+- Minimisation : aucun enfant, école ou classe n’est renvoyé par le login ; ces données ne sont accessibles qu’après authentification et changement du mot de passe initial.
+- Chiffrement des données sensibles au repos lorsque requis et accès strictement journalisé.
+- Pas de stockage du mot de passe en clair : `123456` et le mot de passe personnel sont toujours hashés.
+- Le téléphone ne doit pas être marqué « vérifié » par la seule saisie du mot de passe initial ; ce champ reste réservé à une future vérification réelle du canal.
+
+La conformité locale et les durées de conservation devront être validées par un juriste connaissant l'Ordonnance-Loi n° 23/010 du 13 mars 2023 portant Code du numérique en RDC. Ce document constitue une architecture technique, pas un avis juridique.
 
 ### 5.6 Design industriel (frontend)
 
@@ -280,79 +348,125 @@ audit_logs (
 ### 5.7 Déploiement & opérations
 
 - **Feature flags** : activer/désactiver le module parent par tenant (certaines écoles ne veulent pas encore d'espace parent).
-- **Migrations zéro downtime** : les tables `parents` et `evaluations` sont additives, pas de risque pour les données existantes.
-- **Tests** : 527 tests Pest (backend) + 308 Vitest (frontend) existants. Ajouter des tests d'isolation parent et de calcul de note.
+- **Migrations additives** : les nouvelles tables ne changent pas le comportement courant. La création de l'index composite sur `eleves` devra néanmoins être planifiée sur une base volumineuse, car elle peut prendre un verrou selon PostgreSQL et la stratégie de déploiement.
+- **Tests** : après la Phase 2 backend, la suite vérifiée compte 564 tests Pest et 18 029 assertions. Les futurs calculs devront ajouter leurs tests unitaires et d'isolation.
 
 ---
 
 ## 6. Plan de mise en œuvre par phases
 
-### Phase 1 — Fondations données et modèle (Semaine 1-2)
+### Phase 1 — Fondations responsables (Semaine 1-2)
+
+**État : ✅ fondations implémentées le 27 octobre 2026.** Les migrations restent à appliquer sur les environnements déployés selon la procédure habituelle.
 
 | Livrable | Description |
 |----------|-------------|
-| Migration `create_parents_table` | Table `parents` avec `telephone_normalise` unique |
-| Migration `create_parent_eleve_table` | Table de liaison N:M avec `lien`, `responsable_paiement` |
-| Modèle `Parent` | Relations `eleves()`, `tenant()` |
-| Relation `parents()` sur `Eleve` | `belongsToMany` via `parent_eleve` |
-| Seeder de démo | Quelques parents + enfants dans 2 tenants différents |
-| Tests d'isolation | Parent ne voit que ses enfants, scoped par tenant |
+| Migration `create_responsables_table` | Identité globale avec `telephone_normalise` unique, sans `tenant_id` |
+| Migration `create_lien_responsable_eleves_table` | Liaison riche et tenant-scopée avec cycle de vérification |
+| Contrainte composite | Interdire en base un lien dont le tenant diffère de celui de l'élève |
+| Modèle `Responsable` | Relations `eleves()` et `liensEleves()` |
+| Relation `responsables()` sur `Eleve` | `belongsToMany` via `lien_responsable_eleves` |
+| Factories et seeders explicites | Données de démonstration réservées à local/testing |
+| Tests d'isolation | Une identité globale, liens filtrés par tenant, liens en attente/révoqués sans accès, seeders idempotents et incohérences rejetées par la base |
 
-### Phase 2 — Authentification parent (Semaine 2-3)
+### Phase 2 — Authentification responsable (Semaine 2-3)
+
+**État : ✅ backend implémenté et tests ciblés validés le 27 octobre 2026.**
 
 | Livrable | Description |
 |----------|-------------|
-| Rôle `PARENT` (Spatie) | Système si option B, sinon pas nécessaire |
-| `POST /auth/login-parent` | Connexion par téléphone + mot de passe |
-| `GET /public/parents/enfants?telephone=` | Liste masquée des enfants (sans auth) |
-| `POST /auth/switch-parent` | Switch d'enfant/école sans reconnexion |
-| Mot de passe temporaire + changement forcé | Pattern déjà utilisé pour les staff |
+| `POST /api/v1/responsables/auth/login` | Connexion globale par téléphone + mot de passe, réponse générique et throttle |
+| Synchronisation du dossier élève | Création du compte global et des liens multi-écoles à partir de `telephone_parent_normalise` |
+| Changement initial | `POST /me/password-initial`, minimum 6 caractères, révocation de tous les anciens jetons |
+| `GET /api/v1/responsables/enfants` | Liens vérifiés, écoles et classes, avec identifiants publics uniquement |
+| Sessions | Déconnexion courante, déconnexion globale, transport Bearer ou cookie HttpOnly |
 
 ### Phase 3 — API Parents (Semaine 3-4)
 
 | Livrable | Description |
 |----------|-------------|
-| `ParentController` | `index`, `show`, `enfants`, `bulletin-enfant` |
-| `ParentPolicy` | `viewAny`, `view`, `create`, `update` (scopé tenant) |
-| `ParentResource` | Transformation API (enfant, école, classe, bulletin récent) |
-| Routes `routes/api/v1/parents.php` | Middleware `auth:sanctum` + `tenant` |
+| `ResponsableController` | Profil courant, enfants et documents autorisés |
+| Policies objet | Vérification responsable + lien + tenant + permission sur chaque ressource |
+| Resources API | Enfant, école, classe, période et publications, sans données internes |
+| Routes `routes/api/v1/responsables.php` | Middleware d'auth responsable + policies objet |
 | OpenAPI `openapi-v1.json` | Documentation des nouveaux endpoints |
 | Tests feature | CRUD parent, isolation, calcul de note |
 
 ### Phase 4 — Détail des notes par période (Semaine 4-5)
 
-| Livrable | Description |
-|----------|-------------|
-| Migration `create_evaluations_table` | Table `evaluations` (composantes) |
-| Modèle `Evaluation` | Relations avec `bulletin`, `node`, `periode`, `enseignant` |
-| Service `EvaluationCalculationService` | Agrégation des composantes → note de période |
-| Endpoints `POST /evaluations`, `GET /evaluations` | Saisie et consultation des composantes |
-| Mise à jour `Note` | `mode_calcul`, `note_periode_calculee` |
-| Tests de calcul | Vérification du total pondéré |
+| Livrable | Description | État |
+|----------|-------------|------|
+| Migrations | `types_evaluations`, `evaluations`, `resultats_evaluations` (+ colonnes `origine`, `calcul_version`, `calcul_hash`, `calculee_at` sur `notes`) | ✅ Itération 4.1 appliquée |
+| Modèles | `TypeEvaluation`, `Evaluation`, `ResultatEvaluation` (activité commune séparée des résultats individuels) | ✅ Itération 4.1 appliquée |
+| Énumérations + seeder | `StatutEvaluation`, `NoteOrigine`, `TypeEvaluationSeeder` (5 codes initiaux) | ✅ Itération 4.1 appliquée |
+| Service `EvaluationCalculationService` | Agrégation des composantes → note de période (compute pur + forInscription) | ✅ Itération 4.2 (tests : 28,5/37,5 = 76%) |
+| Endpoints `POST /evaluations`, `GET /evaluations`, `POST /evaluations/{id}/resultats` | Saisie et consultation des composantes (enseignant) | ✅ Itération 4.3 (5 tests, 20 assertions) |
+| Endpoint parent `GET enfants/{lien}/evaluations` | Consultation du détail pour le parent (isolation + calcul) | ✅ Itération 4.4 (2 tests, 15 assertions) |
+| Mise à jour `Note` | Origine, version et hash de calcul ; `valeur` reste l'unique projection officielle | ✅ Colonnes ajoutées (itération 4.1) |
+| Tests de calcul | Vérification du total pondéré | ✅ Itération 4.2 (4 tests, 16 assertions) |
 
 ### Phase 5 — Frontend Espace Parent (Semaine 5-7)
 
+**État : ✅ socle multi-écoles et détail des évaluations implémentés.**
+
 | Livrable | Description |
 |----------|-------------|
-| Page `/parent/login` | Connexion parent |
-| Page `/parent` (dashboard) | Liste des enfants avec écoles, classes, bulletins récents |
-| Page `/parent/enfants/{id}` | Détail d'un enfant |
-| Page `/parent/enfants/{id}/bulletin` | Bulletin avec détail des évaluations par période |
-| Composants `ChildCard`, `EvaluationRow`, `BulletinSummary` | UI réutilisable |
-| Garde `RequireParentAuth` | Protection des routes parent |
-| API client `frontend/src/api/parent.ts` | Méthodes `parentApi` |
-| Routes React Router | Intégration dans `App.tsx` |
-| Tests Vitest | Pages parent, calcul affichage |
+| Page `/parents/connexion` | ✅ Connexion parent et rappel du mot de passe temporaire |
+| Page `/parents/mot-de-passe` | ✅ Remplacement obligatoire de `123456` par au moins 6 caractères |
+| Page `/parents` | ✅ Liste des enfants avec leurs écoles et classes |
+| Page `/parents/enfants/{lienPublicId}` | ✅ Situation scolaire et permissions ; emplacement du futur détail pédagogique |
+| Page bulletin / évaluations | ✅ Détail des évaluations, résultat de l'enfant et calcul de période affichés dans `ResponsableChildPage` (itérations 5.1 et 5.2) ; durcissement : état vide au lieu de 404 sans inscription active + fallback `queryFn` frontend |
+| Garde `RequireResponsableAuth` | ✅ Session séparée, redirections et changement initial obligatoire |
+| API client `frontend/src/api/responsable.ts` | ✅ Login, profil, enfants, mot de passe, déconnexion et enfantEvaluations |
+| Lien public | ✅ « Espace parents » dans l’en-tête mobile/desktop et le pied de page |
+| Tests Vitest | ✅ 45 fichiers et 346 tests, dont le contrat `enfantEvaluations` ; build TypeScript/Vite/PWA validé (itération 5.2) |
 
 ### Phase 6 — Industrialisation (Semaine 7-8)
 
 | Livrable | Description |
 |----------|-------------|
-| Audit logs | Traçabilité des actions parent et enseignant |
-| Feature flags | Activation/désactivation module parent par tenant |
-| PWA offline | Consultation des bulletins sans réseau |
-| Monitoring | Métriques et alertes |
-| Documentation utilisateur | Guide parent (non demandé, mais recommandé) |
+| Audit logs | ✅ Itération 6.1 — création d'évaluation et création/modification de résultat tracées dans `audit_logs` avec acteur, tenant, anciennes/nouvelles valeurs, IP et user-agent (5 tests enseignant, 30 assertions) |
+| Feature flags | ✅ Itération 6.2 — `tenants.espace_parents_actif`, gestion via l'API plateforme, filtrage immédiat des enfants et du détail des évaluations ; réactivation testée (6 tests portail, 55 assertions ; 21 tests plateforme, 109 assertions) |
+| Correctif affichage évaluations | ✅ `ResponsableEnfantEvaluationsController` renvoie un état vide (élève, classe, évaluations vides) au lieu de 404 quand l'élève n'a pas d'inscription/classe active ; `EnfantEvaluationsSection` ajoute un fallback `queryFn` pour ne jamais passer `undefined` à React Query |
+| Interface enseignant des évaluations | ✅ Itération 6.3 (28/10/2026) — le maillon manquant du workflow est comblé : `GET /types-evaluations` (types actifs), `POST /evaluations/{id}/publication` (brouillon → publiée, avec `visible_parents_at`, verrou de période et audit `EVALUATION_PUBLIEE`), pages enseignant `/enseignant/cours/{id}/evaluations` (liste, création par dialog, publication) et `/enseignant/evaluations/{id}/resultats` (grille élèves : présent/absent/dispensé, note bornée au maximum, commentaire parent, enregistrement des seules lignes modifiées). Accès depuis les cartes de cours (`/enseignant`) et la feuille de notes. 4 tests Pest (types, publication, double publication 422, isolation 404) et 9 tests Vitest ; correctif `step="any"` sur les champs numériques (le `stepMismatch` HTML5 bloquait la soumission native). |
+| Notation de période — deux modes de saisie | ✅ Implémenté — Option 1 : saisie par évaluation (exercice/devoir/interro/cahier) avec extrapolation vers le total de référence de la période ; Option 2 : saisie directe d'une note de période sans évaluations intermédiaires. Concerne l'espace enseignant (saisie) et l'espace parent (affichage « X / Y »). Migration `resultats_evaluations` (`valeur_directe`, `maxima_reference`, `saisie_directe`), `EvaluationCalculationService::compute()` gère les deux modes, endpoints enseignant et parent exposent les nouveaux champs. |
+| PWA offline | ✅ Présent — `responsable-offline.ts` : snapshots chiffrés AES-GCM (clé dérivée du marqueur de session), TTL 24 h, repli automatique sur le cache en cas de panne réseau pour la liste des enfants et le détail des évaluations |
+| Monitoring | ✅ Présent — middleware `MonitorResponsableRead` sur les lectures parent + `Platform/ResponsableMonitoringController` pour la supervision plateforme |
+| Documentation utilisateur | ⏳ Guide parent (non demandé, mais recommandé) |
+
+---
+
+## 8. Tâche prioritaire — Notation de période : deux modes de saisie (enseignant + parent)
+
+### Contexte
+
+Le `EvaluationCalculationService` calcule déjà la note de période à partir des composantes (somme pondérée des évaluations), mais deux attentes fonctionnelles ne sont pas couvertes :
+
+1. **Extrapolation vers le total de référence de la période** : si l'enseignant pose un exercice sur 10, une cotation sur 10 et une interrogation sur 20 pour une période dont le total attendu est 40 pts, un élève ayant 5 + 2 + 12 doit voir affiché **19 / 40** (et non seulement un pourcentage).
+2. **Saisie directe de la période** : l'enseignant doit pouvoir saisir directement une note de période (ex: 19 / 40) sans créer d'évaluations intermédiaires.
+
+Ces deux modes concernent l'**espace enseignant** (saisie) et l'**espace parent** (affichage du détail « X / Y »).
+
+### Analyse des deux options
+
+| Option | Principe | Faisabilité | Impact enseignant | Impact parent | Complexité |
+|--------|----------|-------------|-------------------|---------------|------------|
+| **Option 1 — Par évaluation** | Créer plusieurs évaluations pour une matière/période (exercice 10, cahier 10, interro 20). Le service somme `valeur × coefficient` et extrapole vers le `maxima_reference` de la période (ex: 40 pts). | **Haute** — la somme existe déjà ; il reste à ajouter `maxima_reference` et l'affichage « X / Y ». | Ajout d'un champ « total attendu de la période » par matière/période lors de la création ou du paramétrage de l'évaluation. | Affichage « 19 / 40 » dans le détail des évaluations au lieu d'un pourcentage pur. | Faible à moyenne |
+| **Option 2 — Saisie directe** | L'enseignant saisit directement la note de période (ex: 19 / 40) sans créer d'évaluations intermédiaires. Un flag `saisie_directe` court-circuite l'agrégation par composantes. | **Moyenne** — nécessite un nouveau champ `valeur_directe` + `maxima_reference` sur `resultats_evaluations`, une modification du `compute()` et des endpoints. | Formulaire simplifié : un seul champ de saisie par élève et par période. | Affichage de la valeur directe avec son maxima (ex: 19 / 40), indépendamment des composantes. | Moyenne |
+
+### Recommandation d'implémentation
+
+Implémenter les deux options de façon cohérente :
+
+1. **Migration** sur `resultats_evaluations` : ajouter `valeur_directe` (decimal, nullable), `maxima_reference` (decimal, nullable), `saisie_directe` (boolean, default false).
+2. **`EvaluationCalculationService::compute()`** : accepter en option `valeur_directe` / `maxima_reference`. Si `saisie_directe` est true, retourner directement cette note sur cette base sans sommer les composantes. Sinon, sommer les composantes et extrapoler vers `maxima_reference` si fourni.
+3. **Endpoint enseignant** `POST /evaluations/{id}/resultats` : accepter optionnellement `valeur_directe`, `maxima_reference` et `saisie_directe` par résultat.
+4. **Endpoint parent** `GET /enfants/{lien}/evaluations` : exposer `valeur_directe`, `maxima_reference` et `saisie_directe` pour affichage « X / Y ».
+5. **Tests** : unitaires sur le calcul (les deux modes) + d'isolation sur les endpoints enseignant et parent.
+
+### Statut
+
+✅ **Implémenté** — Migration `resultats_evaluations` ajoutée (`valeur_directe`, `maxima_reference`, `saisie_directe`), `EvaluationCalculationService::compute()` accepte `valeurDirecte`/`maximaReference` optionnels, `EvaluationService::storeResultats()` persiste les nouveaux champs avec audit, endpoints enseignant et parent exposent `valeur_directe`/`maxima_reference`/`saisie_directe`, frontend affiche « X / Y » et badge « Direct ». Tests unitaires (8) et feature (enseignant + parent) ajoutés.
 
 ---
 
@@ -360,7 +474,8 @@ audit_logs (
 
 | Risque | Gravité | Mitigation |
 |--------|---------|------------|
-| Rattachement abusif (un parent lie des enfants qui ne sont pas les siens) | Critique | Validation par l'école, confirmation du `telephone_parent` sur la fiche élève, throttle strict, audit log |
+| Connaissance du numéro + mot de passe initial commun | Critique | Changement obligatoire avant toute donnée enfant, réponse générique, throttling par IP et identifiant, audit et révocation des jetons ; OTP/passkey recommandé à terme |
+| Numéro erroné dans un dossier élève | Critique | Accès école strict sur la saisie, normalisation, audit, révocation automatique de l’ancien lien lors de la correction et procédure de support |
 | Fuite de données inter-tenant | Critique | Tests d'isolation obligatoires, scope global `HasTenant`, policy vérifiant `ressource.tenant_id === acteur.tenant_id` |
 | Calcul de note erroné | Majeure | Tests unitaires sur `EvaluationCalculationService`, barème configurable par école, double lecture (enseignant valide le calcul) |
 | Adoption faible par les parents | Mineure | Inscription simplifiée (6 champs), mobile-first, notifications SMS optionnelles, PWA |
@@ -370,14 +485,24 @@ audit_logs (
 
 ## 8. Critères d'acceptation
 
-- [ ] Un parent avec son téléphone voit tous ses enfants dans toutes les écoles où il est lié (multi-tenant).
-- [ ] Un parent ne voit jamais les enfants d'un autre parent, même dans la même école.
-- [ ] Un enseignant peut saisir interrogation, devoir, exercice, cahier pour une période et une matière.
-- [ ] Le système calcule automatiquement la note de période à partir des composantes.
-- [ ] Un parent consulte le détail des évaluations de son enfant pour chaque période.
-- [ ] Aucun `tenant_id` n'est accepté en provenance du client (règle d'or du projet).
-- [ ] Tous les tests d'isolation passent (527 tests backend + nouveaux tests parent).
-- [ ] `pint` passe, le build TypeScript/Vite réussit.
+- [x] Un responsable authentifié voit tous les enfants liés au même numéro normalisé, dans toutes les écoles concernées.
+- [x] La première session est limitée au changement obligatoire du mot de passe ; aucun enfant n’est accessible avant cette opération.
+- [x] Le mot de passe personnel comporte au moins 6 caractères et ne peut pas rester `123456`.
+- [x] Les anciens jetons sont révoqués dès le changement initial.
+- [x] Un parent ne voit jamais les enfants d'un autre numéro, même dans la même école.
+- [x] Un lien `EN_ATTENTE` ou révoqué ne donne aucun accès via les relations et scopes vérifiés de la fondation.
+- [x] La base refuse un lien dont le `tenant_id` diffère de celui de l'élève.
+- [x] Le login ne révèle aucun enfant ni aucune école ; la réponse d’échec reste générique.
+- [x] Un enseignant peut saisir interrogation, devoir, exercice, cahier pour une période et une matière. (endpoints itération 4.3)
+- [x] Le système calcule automatiquement la note de période à partir des composantes. (service itération 4.2)
+- [x] Un parent consulte le détail des évaluations de son enfant pour chaque période. (endpoint itération 4.4 et affichage itération 5.2)
+- [x] Notation de période — deux modes de saisie : (1) par évaluation avec extrapolation vers le total de référence (ex: 19/40), (2) saisie directe d'une note de période. (enseignant + parent, backend + frontend)
+- [ ] Notation de période : deux modes de saisie (enseignant + parent) — Option 1 saisie par évaluation avec extrapolation vers le total de référence, Option 2 saisie directe de la note de période. (tâche prioritaire section 8)
+- [x] Aucun `tenant_id` n'est accepté en provenance du client (règle d'or du projet) : les endpoints enseignant et parent résolvent le tenant via `EstablishmentContext` / `$request->user()`.
+- [x] Les Phases 1 et 2 backend passent la suite complète : 564 tests, 18 029 assertions.
+- [x] `pint --dirty --format agent` passe.
+- [x] Le frontend complet passe : 45 fichiers et 346 tests Vitest, plus le build TypeScript/Vite/PWA.
+- [x] Le lien « Espace parents », la connexion, le changement initial, le tableau de bord multi-écoles et la fiche enfant sont présents.
 
 ---
 
@@ -395,12 +520,14 @@ audit_logs (
 
 ---
 
-## 10. Recommandation immédiate
+## 10. Recommandation immédiate et ordre de réalisation
 
-**Ne pas toucher au code existant pour l'instant.** Valider d'abord ce document avec le dirigeant et les écoles partenaires, puis démarrer par la **Phase 1** (modèle `parents` + `parent_eleve`), qui est purement additive et sans risque pour les données actuelles.
+**Le plan est désormais implémenté de bout en bout (28/10/2026).** L'identité globale `Responsable`, les liens tenant-scopés, l'authentification Sanctum, le changement initial obligatoire, le portail parent multi-écoles, les évaluations par composantes (interrogation, exercice, devoir, cahier), le calcul et la projection de la note de période, les deux modes de saisie (par évaluation ou directe), l'interface enseignant complète, l'audit, les feature flags, le PWA offline et le monitoring sont en place et couverts par les tests.
 
-Le socle existe déjà : `eleves.telephone_parent`, `HasTenant`, le pattern `telephone_normalise` multi-tenant, et l'API REST versionnée. Le projet est donc **techniquement prêt** à accueillir ces deux dimensions.
+Prochaines étapes fonctionnelles possibles (hors plan initial) : spécification du primaire avec les écoles pilotes, renforcement de l'authentification parent (OTP/passkey), guide utilisateur parent, et annexe « Détail des évaluations » dans le PDF du bulletin.
+
+Avant un déploiement élargi, les écoles pilotes doivent toujours répondre aux huit questions de barème : catégories obligatoires, nombre minimal d'activités, coefficients, traitement des absences, retrait éventuel de la plus mauvaise note, moment de visibilité parent, droit de correction après verrouillage et affichage ou non d'une moyenne provisoire.
 
 ---
 
-*Document généré dans le cadre d'une analyse de faisabilité. Aucun fichier de code n'a été modifié.*
+*Document vivant : les états de phase et les résultats de vérification doivent être mis à jour après chaque incrément.*

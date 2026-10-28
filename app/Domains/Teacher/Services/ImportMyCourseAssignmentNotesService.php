@@ -10,6 +10,7 @@ use App\Domains\Evaluation\Services\UpdateVersionedNoteService;
 use App\Domains\Teacher\DTOs\ImportedCourseAssignmentNotes;
 use App\Domains\Teacher\DTOs\LockedCourseAssignmentNoteContext;
 use App\Domains\Teacher\Exceptions\TeacherNoteEntryConflictException;
+use App\Enums\NoteOrigine;
 use App\Models\AttributionCours;
 use App\Models\Bulletin;
 use App\Models\Eleve;
@@ -86,6 +87,8 @@ final class ImportMyCourseAssignmentNotesService
             $hasCorrection = $preparedRows->contains(
                 fn (array $row): bool => $row['note'] instanceof Note
                     && (
+                        $row['note']->origine !== NoteOrigine::Directe
+                        ||
                         $row['note']->statut_resultat
                             !== $row['status']
                         || $row['note']->valeur !== $row['value']
@@ -110,6 +113,7 @@ final class ImportMyCourseAssignmentNotesService
                 $existingNote = $row['note'];
 
                 if ($existingNote instanceof Note
+                    && $existingNote->origine === NoteOrigine::Directe
                     && $existingNote->statut_resultat
                         === $row['status']
                     && $existingNote->valeur === $row['value']) {
@@ -157,6 +161,7 @@ final class ImportMyCourseAssignmentNotesService
                     'valeur' => $row['value'],
                     'saisie_par' => $teacher->getKey(),
                     'date_saisie' => $recordedAt,
+                    'origine' => NoteOrigine::Directe,
                 ]);
                 $progressMustBeUpdated = true;
                 $created++;
