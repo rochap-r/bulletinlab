@@ -262,10 +262,10 @@ jobs:
         env:
           EXPECTED_BACKEND_SHA: ${{ github.sha }}
           EXPECTED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
-          APPROVE_MIGRATIONS: ${{ inputs.approve_migrations }}
-          RUN_REFERENCE_SEEDER: ${{ inputs.run_reference_seeder }}
-          BOOTSTRAP_DATABASE_IDENTITY: ${{ inputs.bootstrap_database_identity }}
-          REDEPLOY_API_NGINX: ${{ inputs.redeploy_api_nginx }}
+          APPROVE_MIGRATIONS: ${{ inputs.approve_migrations || 'false' }}
+          BOOTSTRAP_DATABASE_IDENTITY: ${{ inputs.bootstrap_database_identity || 'false' }}
+          RUN_REFERENCE_SEEDER: ${{ inputs.run_reference_seeder || 'false' }}
+          REDEPLOY_API_NGINX: ${{ inputs.redeploy_api_nginx || 'false' }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
         run: |
@@ -283,7 +283,7 @@ jobs:
           "${REDEPLOY_API_NGINX:-false}" \
           "${RUN_REFERENCE_SEEDER:-false}" \
           "/opt/topscolaire/.env.production"
-          
+
           ssh \
             -i "$HOME/.ssh/topscolaire" \
             -o BatchMode=yes \
