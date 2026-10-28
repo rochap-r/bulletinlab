@@ -403,6 +403,8 @@ deploy_release() {
 
     log "Building image pair: $IMAGE_TAG"
     compose build --pull api frontend
+    image_pair_exists "$IMAGE_TAG" \
+        || { log_error "Built image pair is incomplete for tag: $IMAGE_TAG"; exit 1; }
 
     log 'Starting PostgreSQL and Redis...'
     compose up -d --wait --wait-timeout 180 db redis

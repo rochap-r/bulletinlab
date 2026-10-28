@@ -145,9 +145,6 @@ jobs:
       - name: Build ${{ matrix.service }} image
         run: docker compose --env-file .env.production build --pull ${{ matrix.service }}
 
-      - name: Tag ${{ matrix.service }} image for Trivy
-        run: docker tag topscolaire-${{ matrix.service }}:latest bulletinlab/${{ matrix.service }}:scan
-
       - name: Scan ${{ matrix.service }} image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

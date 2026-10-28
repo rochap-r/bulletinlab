@@ -19,6 +19,7 @@ x-logging: &default-logging
     max-file: "3"
 
 x-api-service: &api-service
+  image: bulletinlab/api:${IMAGE_TAG:-latest}
   build:
     context: .
     dockerfile: docker/api/Dockerfile
@@ -175,6 +176,7 @@ services:
 
   # SPA React statique + proxy /api vers l'API
   frontend:
+    image: bulletinlab/frontend:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: docker/frontend/Dockerfile
