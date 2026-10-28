@@ -319,7 +319,7 @@ initialize_database_identity() {
 verify_seeder_class() {
   log "Vérification de ProductionReferenceSeeder dans la nouvelle image"
 
-  compose run --rm --no-deps api php -r '
+  compose run --interactive=false -T --rm --no-deps api php -r '
     require "vendor/autoload.php";
 
     if (! class_exists("Database\\Seeders\\ProductionReferenceSeeder")) {
@@ -599,7 +599,7 @@ backup_database
 log "Application des migrations en attente"
 
 compose --profile maintenance \
-  run --rm --no-deps migrate
+  run --interactive=false -T --rm --no-deps migrate
 
 check_database_infrastructure
 initialize_database_identity
@@ -615,7 +615,7 @@ RUN_REFERENCE_SEEDER="${RUN_REFERENCE_SEEDER:-false}"
 if [[ "$RUN_REFERENCE_SEEDER" == "true" ]]; then
   log "Synchronisation des référentiels de production"
 
-  compose run --rm --no-deps api \
+  compose run --interactive=false -T --rm --no-deps api \
     php artisan db:seed \
     --class='Database\Seeders\ProductionReferenceSeeder' \
     --force \
@@ -645,5 +645,10 @@ check_health
 write_state current-tag "$NEW_TAG"
 write_state backend-sha "$BACKEND_SHA"
 write_state frontend-sha "$FRONTEND_SHA"
+# Vérification finale obligatoire
+check_database
+
+[[ -s "$STATE_DIR/database-uuid" ]] ||
+  fail "Déploiement incomplet : UUID PostgreSQL non enregistré"
 
 log "Déploiement réussi : $NEW_TAG"
