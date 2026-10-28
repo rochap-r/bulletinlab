@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
@@ -18,22 +19,23 @@ class BulletinLabSchoolYearSeeder extends Seeder
             ? AnneeScolaire::libellePourDate($calendrier->date_debut)
             : '2026-2027';
 
-        $anneeId = DB::table('annees_scolaires')->updateOrInsert(
-            ['libelle' => $libelle, 'calendrier_scolaire_id' => $calendrier->id],
+        $anneeScolaire = AnneeScolaire::query()->updateOrCreate(
+            [
+                'libelle' => $libelle,
+                'calendrier_scolaire_id' => $calendrier->id,
+            ],
             [
                 'date_debut' => $calendrier->date_debut,
                 'date_fin' => $calendrier->date_fin,
-                'active' => true,
-                'cloturee' => false,
-                'created_at' => now(),
-                'updated_at' => now(),
             ]
         );
 
-        $anneeId = DB::table('annees_scolaires')
-            ->where('calendrier_scolaire_id', $calendrier->id)
-            ->where('libelle', $libelle)
-            ->value('id');
+        if ($anneeScolaire->wasRecentlyCreated) {
+            $anneeScolaire->update([
+                'active' => true,
+                'cloturee' => false,
+            ]);
+        }
 
         $periodes = DB::table('calendrier_periodes')
             ->where('calendrier_scolaire_id', $calendrier->id)
@@ -41,17 +43,13 @@ class BulletinLabSchoolYearSeeder extends Seeder
             ->get();
 
         foreach ($periodes as $periode) {
-            DB::table('annee_periode_mappings')->updateOrInsert(
+            AnneePeriodeMapping::query()->updateOrCreate(
                 [
-                    'annee_scolaire_id' => $anneeId,
+                    'annee_scolaire_id' => $anneeScolaire->id,
                     'calendrier_periode_id' => $periode->id,
                 ],
                 [
                     'code_periode_template' => $periode->code,
-                    'saisie_ouverte' => false,
-                    'verrouillee' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
                 ]
             );
         }

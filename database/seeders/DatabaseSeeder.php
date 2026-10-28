@@ -8,37 +8,23 @@ class DatabaseSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->call([
-            BulletinLabCoreSeeder::class,
-            BulletinLabAcademicSeeder::class,
-            BulletinLabLayoutsSeeder::class,
-            BulletinLabCalendarSeeder::class,
-            BulletinLabSchoolYearSeeder::class,
-            BulletinLabTemplateCatalogSeeder::class,
-            BulletinLabPrimaireSeeder::class,
-            BulletinLabCtebSeeder::class,
-            BulletinLabScientificSeeder::class,
-            BulletinLabCommercialeSeeder::class,
-            BulletinLabPedagogySeeder::class,
-            BulletinLabMechanicsSeeder::class,
-            BulletinLabElectricalConstructionSeeder::class,
-            BulletinLabBaremesSeeder::class,
-            BulletinLabPlatformSeeder::class,
-            BulletinLabTestDataSeeder::class,
-            BulletinLabModelBulletinSeeder::class,
-            BulletinLabScenarioEleveSeeder::class,
-            BulletinLabScientificDemoSeeder::class,
-            BulletinLabPedagogyDemoSeeder::class,
-            BulletinLabAutomotiveDemoSeeder::class,
-            BulletinLabGeneralMechanicsDemoSeeder::class,
-            BulletinLabElectricityDemoSeeder::class,
-            BulletinLabConstructionDemoSeeder::class,
-            BulletinLabCommercialDemoSeeder::class,
-        ]);
+        $this->call(ProductionReferenceSeeder::class);
 
         if (app()->environment(['local', 'testing'])) {
-            $this->call(TenantAdminDemoSeeder::class);
-            $this->call(AuthDemoSeeder::class);
+            $this->call([
+                BulletinLabTestDataSeeder::class,
+                BulletinLabModelBulletinSeeder::class,
+                BulletinLabScenarioEleveSeeder::class,
+                BulletinLabScientificDemoSeeder::class,
+                BulletinLabPedagogyDemoSeeder::class,
+                BulletinLabAutomotiveDemoSeeder::class,
+                BulletinLabGeneralMechanicsDemoSeeder::class,
+                BulletinLabElectricityDemoSeeder::class,
+                BulletinLabConstructionDemoSeeder::class,
+                BulletinLabCommercialDemoSeeder::class,
+                TenantAdminDemoSeeder::class,
+                AuthDemoSeeder::class,
+            ]);
         }
     }
 }

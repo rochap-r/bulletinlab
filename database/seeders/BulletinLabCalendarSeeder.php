@@ -2,14 +2,17 @@
 
 namespace Database\Seeders;
 
+use App\Models\CalendrierCycleParametre;
+use App\Models\CalendrierEvenement;
+use App\Models\CalendrierPeriode;
+use App\Models\CalendrierScolaire;
 use Illuminate\Database\Seeder;
-use Illuminate\Support\Facades\DB;
 
 class BulletinLabCalendarSeeder extends Seeder
 {
     public function run(): void
     {
-        DB::table('calendriers_scolaires')->updateOrInsert(
+        $calendar = CalendrierScolaire::query()->updateOrCreate(
             ['code' => 'RDC_2026_2027'],
             [
                 'libelle' => 'Calendrier scolaire officiel RDC 2026-2027',
@@ -17,13 +20,8 @@ class BulletinLabCalendarSeeder extends Seeder
                 'date_debut' => '2026-09-01',
                 'date_fin' => '2027-07-02',
                 'officiel' => true,
-                'actif' => true,
-                'created_at' => now(),
-                'updated_at' => now(),
             ]
         );
-
-        $calendarId = DB::table('calendriers_scolaires')->where('code', 'RDC_2026_2027')->value('id');
 
         $profiles = [
             ['MATERNELLE', 'TRIMESTRIEL', 192, ['LUNDI', 'MARDI', 'MERCREDI', 'JEUDI', 'VENDREDI']],
@@ -32,15 +30,13 @@ class BulletinLabCalendarSeeder extends Seeder
         ];
 
         foreach ($profiles as [$cycle, $mode, $days, $schoolDays]) {
-            DB::table('calendrier_cycle_parametres')->updateOrInsert(
-                ['calendrier_scolaire_id' => $calendarId, 'cycle_scolaire' => $cycle],
+            CalendrierCycleParametre::query()->updateOrCreate(
+                ['calendrier_scolaire_id' => $calendar->id, 'cycle_scolaire' => $cycle],
                 [
                     'mode_decoupage' => $mode,
                     'jours_ouvrables_attendus' => $days,
                     'heures_minimales' => 900,
-                    'jours_classe' => json_encode($schoolDays, JSON_THROW_ON_ERROR),
-                    'created_at' => now(),
-                    'updated_at' => now(),
+                    'jours_classe' => $schoolDays,
                 ]
             );
         }
@@ -80,8 +76,8 @@ class BulletinLabCalendarSeeder extends Seeder
         ];
 
         foreach ($periods as $order => [$code, $name, $type, $cycle, $start, $end]) {
-            DB::table('calendrier_periodes')->updateOrInsert(
-                ['calendrier_scolaire_id' => $calendarId, 'code' => $code],
+            CalendrierPeriode::query()->updateOrCreate(
+                ['calendrier_scolaire_id' => $calendar->id, 'code' => $code],
                 [
                     'nom' => $name,
                     'type_periode' => $type,
@@ -89,18 +85,14 @@ class BulletinLabCalendarSeeder extends Seeder
                     'date_debut' => $start,
                     'date_fin' => $end,
                     'ordre' => $order + 1,
-                    'saisie_notes_ouverte' => false,
-                    'periode_active' => false,
-                    'created_at' => now(),
-                    'updated_at' => now(),
                 ]
             );
         }
 
         foreach ($this->events() as $event) {
-            DB::table('calendrier_evenements')->updateOrInsert(
-                ['calendrier_scolaire_id' => $calendarId, 'code' => $event['code']],
-                $event + ['created_at' => now(), 'updated_at' => now()]
+            CalendrierEvenement::query()->updateOrCreate(
+                ['calendrier_scolaire_id' => $calendar->id, 'code' => $event['code']],
+                $event,
             );
         }
     }
@@ -108,9 +100,9 @@ class BulletinLabCalendarSeeder extends Seeder
     /** @return array<int, array<string, mixed>> */
     private function events(): array
     {
-        $everyone = json_encode(['TOUS'], JSON_THROW_ON_ERROR);
-        $schoolStaff = json_encode(['DIRECTION', 'ENSEIGNANT'], JSON_THROW_ON_ERROR);
-        $direction = json_encode(['DIRECTION', 'PLATEFORME'], JSON_THROW_ON_ERROR);
+        $everyone = ['TOUS'];
+        $schoolStaff = ['DIRECTION', 'ENSEIGNANT'];
+        $direction = ['DIRECTION', 'PLATEFORME'];
 
         return [
             $this->event('RENTREE', 'Rentrée scolaire 2026-2027', 'RENTREE', 'TOUS', '2026-09-01', '2026-09-01', $everyone, 'CRITIQUE', 30),
@@ -150,7 +142,7 @@ class BulletinLabCalendarSeeder extends Seeder
         string $cycle,
         string $start,
         string $end,
-        string $audiences,
+        array $audiences,
         string $level,
         int $leadDays,
     ): array {

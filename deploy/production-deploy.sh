@@ -335,6 +335,13 @@ run_migrations() {
     compose --profile maintenance run --rm migrate php artisan migrate --force
 }
 
+sync_production_reference_data() {
+    log 'Synchronizing required production reference data...'
+    compose --profile maintenance run --rm migrate \
+        php artisan db:seed --class=Database\\Seeders\\ProductionReferenceSeeder --force
+    log 'Production reference data is complete.'
+}
+
 prune_old_artifacts() {
     find "$BACKUP_DIR" -name 'topscolaire-*.sql.gz' -type f \
         | sort -r \
@@ -403,6 +410,7 @@ deploy_release() {
 
     backup_database
     run_migrations
+    sync_production_reference_data
 
     log 'Rolling out the application stack...'
     ROLLBACK_ARMED=true

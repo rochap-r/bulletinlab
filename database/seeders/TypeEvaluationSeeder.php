@@ -4,7 +4,6 @@ namespace Database\Seeders;
 
 use App\Models\TypeEvaluation;
 use Illuminate\Database\Seeder;
-use LogicException;
 
 class TypeEvaluationSeeder extends Seeder
 {
@@ -13,10 +12,6 @@ class TypeEvaluationSeeder extends Seeder
      */
     public function run(): void
     {
-        if (! app()->environment(['local', 'testing'])) {
-            throw new LogicException('Le jeu de types d\'évaluations est réservé aux environnements local et testing.');
-        }
-
         $types = [
             ['code' => 'INTERROGATION', 'nom' => 'Interrogation', 'description' => 'Interrogation orale ou écrite'],
             ['code' => 'EXERCICE', 'nom' => 'Exercice', 'description' => 'Travail réalisé en classe'],

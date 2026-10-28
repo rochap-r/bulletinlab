@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\Hash;
 
 uses(RefreshDatabase::class);
 
-test('the platform seeder applies the configured password when rerun', function (): void {
+test('the platform seeder only applies the configured password when creating the admin', function (): void {
     config()->set('seeding.platform_admin_password', 'first-platform-password');
 
     $this->seed(BulletinLabPlatformSeeder::class);
@@ -27,7 +27,13 @@ test('the platform seeder applies the configured password when rerun', function 
     config()->set('seeding.platform_admin_password', 'second-platform-password');
     $this->seed(BulletinLabPlatformSeeder::class);
 
-    expect(Hash::check('second-platform-password', $admin->fresh()->mot_de_passe))->toBeTrue();
+    expect(Hash::check('first-platform-password', $admin->fresh()->mot_de_passe))->toBeTrue()
+        ->and(Hash::check('second-platform-password', $admin->fresh()->mot_de_passe))->toBeFalse();
+
+    config()->set('seeding.platform_admin_password', '');
+    $this->seed(BulletinLabPlatformSeeder::class);
+
+    expect(Hash::check('first-platform-password', $admin->fresh()->mot_de_passe))->toBeTrue();
 });
 
 test('the test data seeder applies the configured demo passwords', function (): void {

@@ -12,8 +12,6 @@ class BulletinLabPlatformSeeder extends Seeder
 {
     public function run(): void
     {
-        $password = $this->configuredPassword();
-
         $roles = [
             'ADMIN_PLATEFORME' => 'Administrateur plateforme',
             'SUPPORT_PLATEFORME' => 'Support plateforme',
@@ -23,15 +21,18 @@ class BulletinLabPlatformSeeder extends Seeder
             RolePlateforme::query()->updateOrCreate(['code' => $code], ['nom' => $nom]);
         }
 
-        $admin = UtilisateurPlateforme::query()->updateOrCreate(
-            ['email' => 'admin@bulletinlab.app'],
-            [
+        $admin = UtilisateurPlateforme::query()->firstOrNew([
+            'email' => 'admin@bulletinlab.app',
+        ]);
+
+        if (! $admin->exists) {
+            $admin->fill([
                 'nom' => 'Administrateur',
                 'postnom' => 'Plateforme',
-                'mot_de_passe' => Hash::make($password),
+                'mot_de_passe' => Hash::make($this->configuredPassword()),
                 'actif' => true,
-            ],
-        );
+            ])->save();
+        }
 
         $admin->roles()->syncWithoutDetaching('ADMIN_PLATEFORME');
     }
