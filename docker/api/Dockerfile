@@ -51,7 +51,7 @@ FROM php:8.4-fpm
 
 # pdo_pgsql (PostgreSQL), zip (maatwebsite/excel), bcmath (calculs décimaux),
 # pcntl (workers queue: signaux), opcache (perf), redis (cache/queue/sessions),
-# gd (phpoffice/phpspreadsheet : images dans les fichiers Excel)
+# gd (phpoffice/phpspreadsheet : images dans les fichiers Excel), intl (i18n)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         $PHPIZE_DEPS \
         libzip-dev \
@@ -59,8 +59,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpng-dev \
         libfreetype6-dev \
         libjpeg62-turbo-dev \
+        libicu-dev \
     && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j"$(nproc)" pdo_pgsql zip bcmath pcntl opcache gd \
+    && docker-php-ext-install -j"$(nproc)" pdo_pgsql zip bcmath pcntl opcache gd intl \
     && pecl install redis \
     && docker-php-ext-enable redis \
     && apt-get purge -y --auto-remove $PHPIZE_DEPS \
