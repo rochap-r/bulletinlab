@@ -26,7 +26,9 @@ final class ConfigurationBulletinDetailResource extends JsonResource
             'actif' => (bool) $template->actif,
             'statut' => $template->statut?->value,
             'publie_a' => $template->publie_a,
-            'total_general_maxima' => $template->total_general_maxima,
+            'total_general_maxima' => $template->total_general_maxima === null
+                ? null
+                : (float) $template->total_general_maxima,
             'cycle' => $this->reference('cycle'),
             'degre' => $this->reference('degre'),
             'option' => $this->reference('option'),

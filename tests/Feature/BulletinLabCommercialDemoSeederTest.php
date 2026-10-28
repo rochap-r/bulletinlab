@@ -47,7 +47,7 @@ test('les activites et la pratique commerciales conservent les cases hachurees e
         foreach ($nodes as $node) {
             $maximum = $node->libelle === 'Pratique professionnelle' ? 100 : ($year <= 2 ? 20 : 10);
             $maxima = DB::table('system_template_maxima')->join('system_template_periodes', 'system_template_periodes.id', '=', 'system_template_maxima.periode_id')
-                ->where('node_id', $node->id)->pluck('maxima', 'code')->map(fn ($value): int => (int) $value)->all();
+                ->where('node_id', $node->id)->orderBy('system_template_periodes.ordre')->pluck('maxima', 'code')->map(fn ($value): int => (int) $value)->all();
             expect($maxima)->toBe(['P1' => $maximum, 'P2' => $maximum, 'TOTAL_S1' => 2 * $maximum,
                 'P3' => $maximum, 'P4' => $maximum, 'TOTAL_S2' => 2 * $maximum, 'TOTAL_GENERAL' => 4 * $maximum]);
         }

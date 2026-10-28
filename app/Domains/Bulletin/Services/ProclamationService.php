@@ -112,6 +112,7 @@ final class ProclamationService implements ProclamationServiceInterface
     ): Collection {
         return Publication::query()
             ->withoutGlobalScopes()
+            ->select('publications.*')
             ->with(['bulletin.inscription.eleve', 'resultatBulletin'])
             ->join(
                 'resultats_bulletins',

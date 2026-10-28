@@ -436,8 +436,15 @@ test('the platform can filter tenants by status for the pending queue', function
 
 test('the platform can send a refused tenant back for review', function () {
     $token = makePlatformTenantAdminToken();
+    $platformUserId = UtilisateurPlateforme::query()
+        ->where('email', 'tenants-admin@plateforme.test')
+        ->valueOrFail('id');
     $tenant = createPendingTenantForAccessTests('REFUSE');
-    $tenant->update(['motif_refus' => 'Dossier incomplet.', 'valide_at' => now(), 'valide_par_id' => 1]);
+    $tenant->update([
+        'motif_refus' => 'Dossier incomplet.',
+        'valide_at' => now(),
+        'valide_par_id' => $platformUserId,
+    ]);
 
     $this->withToken($token)
         ->postJson("/api/v1/platform/tenants/{$tenant->id}/reexamen")

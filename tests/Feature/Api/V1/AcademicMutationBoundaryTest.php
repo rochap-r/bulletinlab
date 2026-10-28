@@ -722,7 +722,7 @@ function createAcademicMutationScope(
     );
     $user->roles()->attach($managementRole->id);
     $year = AnneeScolaire::create([
-        'libelle' => "2026-2027-{$suffix}",
+        'libelle' => '2026-2027-'.substr(hash('sha256', $suffix), 0, 10),
         'date_debut' => '2026-09-01',
         'date_fin' => '2027-07-31',
         'active' => true,
@@ -6411,8 +6411,10 @@ test('database rejects incoherent note result statuses and values on insert and 
         ['statut_resultat' => 'ANNULEE', 'valeur' => 1],
     ] as $invalidResult) {
         expect(
-            fn () => DB::table('notes')->insert(
-                ['public_id' => (string) Str::ulid(), ...$noteAttributes, ...$invalidResult],
+            fn () => DB::transaction(
+                fn () => DB::table('notes')->insert(
+                    ['public_id' => (string) Str::ulid(), ...$noteAttributes, ...$invalidResult],
+                ),
             ),
         )->toThrow(QueryException::class);
     }
@@ -6425,12 +6427,14 @@ test('database rejects incoherent note result statuses and values on insert and 
     ]);
 
     expect(
-        fn () => DB::table('notes')
-            ->where('id', $noteId)
-            ->update([
-                'statut_resultat' => 'SAISIE',
-                'valeur' => null,
-            ]),
+        fn () => DB::transaction(
+            fn () => DB::table('notes')
+                ->where('id', $noteId)
+                ->update([
+                    'statut_resultat' => 'SAISIE',
+                    'valeur' => null,
+                ]),
+        ),
     )->toThrow(QueryException::class);
 
     DB::table('notes')
@@ -6494,8 +6498,10 @@ test('database rejects incoherent historical result pairs and preserves legacy u
         ],
     ] as $invalidHistory) {
         expect(
-            fn () => DB::table('notes_historiques')->insert(
-                [...$historyAttributes, ...$invalidHistory],
+            fn () => DB::transaction(
+                fn () => DB::table('notes_historiques')->insert(
+                    [...$historyAttributes, ...$invalidHistory],
+                ),
             ),
         )->toThrow(QueryException::class);
     }
@@ -6509,12 +6515,14 @@ test('database rejects incoherent historical result pairs and preserves legacy u
     ]);
 
     expect(
-        fn () => DB::table('notes_historiques')
-            ->where('id', $legacyHistoryId)
-            ->update([
-                'nouveau_statut_resultat' => 'ABSENTE',
-                'nouvelle_valeur' => 1,
-            ]),
+        fn () => DB::transaction(
+            fn () => DB::table('notes_historiques')
+                ->where('id', $legacyHistoryId)
+                ->update([
+                    'nouveau_statut_resultat' => 'ABSENTE',
+                    'nouvelle_valeur' => 1,
+                ]),
+        ),
     )->toThrow(QueryException::class);
 
     DB::table('notes_historiques')->insert([

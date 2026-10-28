@@ -38,7 +38,7 @@ final class EvaluationService
      */
     public function index(array $filters): LengthAwarePaginator
     {
-        $tenantId = $this->establishmentContext->id();
+        $tenantId = (int) $this->establishmentContext->current()->tenant_id;
 
         $query = Evaluation::query()
             ->where('tenant_id', $tenantId)
@@ -172,7 +172,7 @@ final class EvaluationService
 
     public function publish(Evaluation $evaluation, Utilisateur $teacher): Evaluation
     {
-        if ((int) $evaluation->tenant_id !== $this->establishmentContext->id()) {
+        if ((int) $evaluation->etablissement_id !== $this->establishmentContext->id()) {
             throw (new ModelNotFoundException)->setModel(Evaluation::class, [$evaluation->getKey()]);
         }
 

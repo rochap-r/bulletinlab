@@ -38,7 +38,7 @@ final class EvaluationController extends Controller
 
     public function show(EstablishmentContext $context, Evaluation $evaluation): JsonResponse
     {
-        if ((int) $evaluation->tenant_id !== $context->id()) {
+        if ((int) $evaluation->etablissement_id !== $context->id()) {
             abort(404);
         }
 

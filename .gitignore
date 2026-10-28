@@ -15,6 +15,7 @@
 /.vscode
 /.zed
 /.deploy-state/
+/logs_*/
 /auth.json
 /node_modules
 /public/build
