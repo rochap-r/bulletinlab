@@ -239,7 +239,21 @@ Valider la configuration Compose :
 docker compose --env-file .env.production config --quiet
 ```
 
-L'absence de sortie signifie que la configuration est valide.
+L'absence de sortie signifie que la configuration est valide. Les trois volumes
+persistent PostgreSQL, Redis et le stockage Laravel sous des noms physiques
+fixes : `topscolaire_topscolaire_pg_data`,
+`topscolaire_topscolaire_redis_data` et
+`topscolaire_topscolaire_api_storage`. Sur une installation neuve, crée-les
+explicitement avec `docker volume create` avant le premier démarrage :
+
+```bash
+docker volume create topscolaire_topscolaire_pg_data
+docker volume create topscolaire_topscolaire_redis_data
+docker volume create topscolaire_topscolaire_api_storage
+```
+
+Ne supprime pas ces volumes lors d'un déploiement applicatif. Compose échoue
+volontairement si l'un d'eux est absent plutôt que d'initialiser une base vide.
 
 ## 7. Construire et démarrer les services Docker
 
@@ -263,12 +277,18 @@ docker compose --env-file .env.production \
   --profile maintenance run --rm migrate
 ```
 
-Créer les référentiels, les comptes initiaux et les données de test :
+Créer les référentiels et le compte administrateur de production :
 
 ```bash
 docker compose --env-file .env.production \
-  run --rm api php artisan db:seed --force
+  run --rm api php artisan db:seed \
+  --class=Database\\Seeders\\ProductionReferenceSeeder \
+  --force --no-interaction
 ```
+
+Ne lance pas `DatabaseSeeder` en production : il contient des données de test
+et de démonstration. Le déploiement automatique utilise maintenant exclusivement
+`ProductionReferenceSeeder`, dont les opérations sont idempotentes.
 
 Démarrer toute la plateforme :
 
@@ -610,7 +630,7 @@ docker compose --env-file .env.production up -d --force-recreate \
 
 Les workflows sont stockés dans les deux dépôts :
 
-- `rochap-r/bulletinlab/.github/workflows/deploy-production.yml` se connecte au
+- `rochap-r/bulletinlab/.github/workflows/deploy-production.yml`
   exécute la CI Laravel, puis se connecte au VPS et lance le déploiement ;
 - `rochap-r/bulletinlabfrontend/.github/workflows/notify-production-deploy.yml`
   exécute la CI React, puis demande le même déploiement après un push frontend.
@@ -624,8 +644,10 @@ un déclenchement manuel du workflow backend.
 
 Le job de CD récupère les deux branches `main`, construit des images nommées avec
 leurs deux SHA, attend PostgreSQL et Redis, crée une sauvegarde PostgreSQL
-compressée dans `/opt/backups/topscolaire`, exécute les migrations, met à jour
-Compose et vérifie `/up` ainsi que `https://topscolaire.com`. Un verrou sur le
+au format PostgreSQL custom dans `/opt/backups/topscolaire/deployments`, exécute les migrations puis synchronise
+les référentiels idempotents. Il recrée uniquement les services applicatifs avec
+`--no-deps`, sans toucher à PostgreSQL ou Redis, puis vérifie `/up` ainsi que
+`https://topscolaire.com`. Un verrou sur le
 VPS empêche deux déploiements de tourner en parallèle. Une erreur de build,
 migration ou vérification fait échouer le job ; elle n'est pas ignorée.
 
@@ -705,6 +727,51 @@ selon les blocs de la section 9/10 : il doit remplacer `X-Forwarded-For` par
 `X-Forwarded-Proto` avec `$scheme`. Tester avec `nginx -t`, puis recharger le
 service.
 
+### Initialiser une fois le suivi du déploiement existant
+
+Sur un VPS déjà en production, enregistrer d'abord les révisions qui sont
+réellement en service. Cette opération ne modifie ni les conteneurs ni la base :
+
+```bash
+cd /opt/topscolaire
+install -d -m 700 .deploy-state
+
+printf '%s\n' 'd9d9e4db72c7e469270867fb68a8dd78079a323e' \
+  > .deploy-state/backend-sha
+printf '%s\n' 'b59747a1c6940e9d3559adea28f7d9e0dd4367a6' \
+  > .deploy-state/frontend-sha
+printf '%s\n' 'main-d9d9e4db72c7-b59747a1c694' \
+  > .deploy-state/current-tag
+
+chmod 600 .deploy-state/*
+```
+
+Ces trois valeurs correspondent à la version vérifiée le 28 octobre 2026. Si
+une autre version a été déployée entre-temps, utiliser ses SHA et son tag réels.
+Le script refuse de continuer si `backend-sha` est absent, invalide ou n'est pas
+un ancêtre du commit demandé : le contrôle des migrations ne peut ainsi pas
+être contourné par une base de comparaison inconnue.
+
+Le premier commit qui ajoute `deployment_identity` doit être lancé manuellement
+depuis **Actions → Deploy TopScolaire production → Run workflow**, avec :
+
+- `approve_migrations` activé ;
+- `bootstrap_database_identity` activé ;
+- `rollback` désactivé.
+
+Le script vérifie d'abord le volume physique
+`topscolaire_topscolaire_pg_data`, sauvegarde PostgreSQL, applique la migration
+additive, crée un UUID permanent dans cette base et l'enregistre avec des droits
+restreints dans `.deploy-state/database-uuid`. Les déploiements suivants
+vérifient cet UUID automatiquement. Aucun UUID d'école ni aucune donnée métier
+n'est utilisé pour identifier la base.
+
+Un push contenant une nouvelle migration sans `approve_migrations` échoue
+volontairement avant la sauvegarde et avant toute modification de la base. Après
+revue et réussite des tests PostgreSQL 18, relancer manuellement le workflow
+avec cette approbation. Les modifications, suppressions et renommages de
+migrations déjà suivies restent toujours interdits.
+
 Après avoir préparé le compte VPS et ces secrets, pousser les workflows sur
 `main`. Un push backend lance le déploiement directement ; un push frontend
 déclenche le workflow de notification puis le déploiement backend. L'exécution
@@ -715,7 +782,7 @@ sauvegarde ne remplace pas un plan de restauration testé. Les migrations
 incompatibles avec l'ancienne version et les changements applicatifs risqués
 doivent toujours être revus avant le push en production.
 Ces sauvegardes sont locales au VPS ; maintenir aussi une copie hors serveur
-et surveiller l'espace disponible dans `/opt/backups/topscolaire`.
+et surveiller l'espace disponible dans `/opt/backups/topscolaire/deployments`.
 
 ### Déploiement manuel / récupération après incident
 

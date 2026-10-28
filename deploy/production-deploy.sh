@@ -1,446 +1,642 @@
 #!/usr/bin/env bash
-
 set -Eeuo pipefail
+umask 077
 
-APP_DIR="${APP_DIR:-/opt/topscolaire}"
-FRONTEND_DIR="${FRONTEND_DIR:-${APP_DIR}/frontend}"
-ENV_FILE="${ENV_FILE:-${APP_DIR}/.env.production}"
+# ============================================
+# TOPSCOLAIRE — DEPLOIEMENT PRODUCTION
+# Laravel 13 / React / PostgreSQL 18
+# ============================================
 
-# Robustesse : si ENV_FILE vient de l'environnement serveur mais pointe vers
-# un fichier introuvable, basculer sur .env.production (présent sur prod).
-if [[ ! -f "$ENV_FILE" && -f "${APP_DIR}/.env.production" ]]; then
-    ENV_FILE="${APP_DIR}/.env.production"
-fi
-BACKUP_DIR="${BACKUP_DIR:-/opt/backups/topscolaire}"
-EXPECTED_BACKEND_SHA="${EXPECTED_BACKEND_SHA:-}"
-EXPECTED_FRONTEND_SHA="${EXPECTED_FRONTEND_SHA:-}"
-AUTO_ROLLBACK="${AUTO_ROLLBACK:-true}"
+ROOT="/opt/topscolaire"
+ENV_FILE="${ENV_FILE:-$ROOT/.env.production}"
+BACKUP_DIR="/opt/backups/topscolaire/deployments"
+STATE_DIR="$ROOT/.deploy-state"
+LOCK_FILE="/tmp/topscolaire-deploy.lock"
+
+EXPECTED_VOLUME="topscolaire_topscolaire_pg_data"
+
+APPROVE_MIGRATIONS="${APPROVE_MIGRATIONS:-false}"
+BOOTSTRAP_DATABASE_IDENTITY="${BOOTSTRAP_DATABASE_IDENTITY:-false}"
+REDEPLOY_API_NGINX="${REDEPLOY_API_NGINX:-false}"
 ROLLBACK_ONLY="${ROLLBACK_ONLY:-false}"
-ROLLBACK_IMAGE_TAG="${ROLLBACK_IMAGE_TAG:-}"
-
-BACKEND_SHA="unknown"
-FRONTEND_SHA="unknown"
-IMAGE_TAG="unknown"
-PREVIOUS_IMAGE_TAG=""
+EXPECTED_DATABASE_UUID="${DEPLOYMENT_DATABASE_UUID:-}"
 BACKUP_TEMP=""
-LOCAL_RELEASE_HTML=""
-PUBLIC_RELEASE_HTML=""
-ROLLBACK_ARMED=false
 
 log() {
-    printf '[deploy] %s\n' "$*"
+  printf '[TOPSCOLAIRE] %s\n' "$*"
 }
 
-log_error() {
-    printf '[deploy] ERROR: %s\n' "$*" >&2
+fail() {
+  printf '[ERREUR] %s\n' "$*" >&2
+  exit 1
 }
+
+on_error() {
+  local status=$?
+  printf '[ERREUR] Déploiement interrompu (code %s).\n' "$status" >&2
+  printf '[IMPORTANT] Les migrations déjà appliquées ne sont pas annulées.\n' >&2
+  exit "$status"
+}
+
+trap on_error ERR
 
 cleanup() {
-    if [[ -n "$BACKUP_TEMP" && -f "$BACKUP_TEMP" ]]; then
-        rm -f -- "$BACKUP_TEMP"
-    fi
-
-    if [[ -n "$LOCAL_RELEASE_HTML" && -f "$LOCAL_RELEASE_HTML" ]]; then
-        rm -f -- "$LOCAL_RELEASE_HTML"
-    fi
-
-    if [[ -n "$PUBLIC_RELEASE_HTML" && -f "$PUBLIC_RELEASE_HTML" ]]; then
-        rm -f -- "$PUBLIC_RELEASE_HTML"
-    fi
+  if [[ -n "$BACKUP_TEMP" && -f "$BACKUP_TEMP" ]]; then
+    rm -f -- "$BACKUP_TEMP"
+  fi
 }
 
 trap cleanup EXIT
 
+is_valid_uuid() {
+  [[ "$1" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]
+}
+
+is_boolean() {
+  [[ "$1" == "true" || "$1" == "false" ]]
+}
+
+write_state() {
+  local name="$1"
+  local value="$2"
+  local temporary="$STATE_DIR/.${name}.tmp.$$"
+
+  printf '%s\n' "$value" > "$temporary"
+  mv -f -- "$temporary" "$STATE_DIR/$name"
+}
+
+# ============================================
+# 1. PREREQUIS ET VERROUILLAGE
+# ============================================
+
+for cmd in docker git flock curl python3; do
+  command -v "$cmd" >/dev/null ||
+    fail "Commande indisponible : $cmd"
+done
+
+[[ -f "$ROOT/docker-compose.yml" ]] ||
+  fail "docker-compose.yml introuvable"
+
+[[ -s "$ENV_FILE" ]] ||
+  fail "Fichier .env.production introuvable"
+
+[[ -d "$ROOT/.git" ]] ||
+  fail "Dépôt backend Git introuvable"
+
+[[ -d "$ROOT/frontend/.git" ]] ||
+  fail "Dépôt frontend Git introuvable"
+
+mkdir -p "$BACKUP_DIR" "$STATE_DIR"
+chmod 700 "$BACKUP_DIR" "$STATE_DIR"
+
+[[ -w "$BACKUP_DIR" ]] ||
+  fail "Répertoire de sauvegarde non accessible en écriture : $BACKUP_DIR"
+
+[[ -w "$STATE_DIR" ]] ||
+  fail "Répertoire d'état non accessible en écriture : $STATE_DIR"
+
+[[ -z "$(git -C "$ROOT" ls-files -- '.deploy-state/**')" ]] ||
+  fail ".deploy-state ne doit contenir aucun fichier suivi par Git"
+
+exec 9>"$LOCK_FILE"
+
+flock -n 9 ||
+  fail "Un déploiement est déjà en cours"
+
+cd "$ROOT"
+
 compose() {
+  ENV_FILE="$ENV_FILE" \
     docker compose --env-file "$ENV_FILE" "$@"
 }
 
-is_valid_sha() {
-    [[ "$1" =~ ^[0-9a-f]{40}$ ]]
+compose config --quiet
+
+if [[ -z "$EXPECTED_DATABASE_UUID" && -s "$STATE_DIR/database-uuid" ]]; then
+  EXPECTED_DATABASE_UUID="$(cat "$STATE_DIR/database-uuid")"
+fi
+
+EXPECTED_DATABASE_UUID="${EXPECTED_DATABASE_UUID,,}"
+
+if [[ -n "$EXPECTED_DATABASE_UUID" ]]; then
+  is_valid_uuid "$EXPECTED_DATABASE_UUID" ||
+    fail "UUID d'identité PostgreSQL invalide"
+fi
+
+is_boolean "$APPROVE_MIGRATIONS" ||
+  fail "APPROVE_MIGRATIONS doit valoir true ou false"
+
+is_boolean "$BOOTSTRAP_DATABASE_IDENTITY" ||
+  fail "BOOTSTRAP_DATABASE_IDENTITY doit valoir true ou false"
+
+is_boolean "$REDEPLOY_API_NGINX" ||
+  fail "REDEPLOY_API_NGINX doit valoir true ou false"
+
+is_boolean "$ROLLBACK_ONLY" ||
+  fail "ROLLBACK_ONLY doit valoir true ou false"
+
+# ============================================
+# 2. VERIFICATION POSTGRESQL
+# ============================================
+
+database_container_id() {
+  compose ps -q db 2>/dev/null
 }
 
-is_valid_image_tag() {
-    [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]
+db_psql() {
+  local container_id
+
+  container_id="$(database_container_id)"
+  [[ -n "$container_id" ]] || fail "Conteneur PostgreSQL introuvable"
+
+  docker exec "$container_id" sh -c \
+    'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"' \
+    sh "$@"
 }
 
-check_prerequisites() {
-    log 'Running pre-flight checks...'
+db_pg_dump() {
+  local container_id
 
-    [[ -d "$APP_DIR/.git" ]] || { log_error "Backend repository not found at $APP_DIR"; exit 1; }
-    [[ -d "$FRONTEND_DIR/.git" ]] || { log_error "Frontend repository not found at $FRONTEND_DIR"; exit 1; }
-    [[ -f "$ENV_FILE" ]] || { log_error "Environment file not found: $ENV_FILE"; exit 1; }
+  container_id="$(database_container_id)"
+  [[ -n "$container_id" ]] || fail "Conteneur PostgreSQL introuvable"
 
-    local command_name
-    for command_name in curl docker flock git gzip sed; do
-        command -v "$command_name" >/dev/null 2>&1 \
-            || { log_error "Required command not found: $command_name"; exit 1; }
-    done
-
-    docker compose version >/dev/null
-
-    local required_variable
-    for required_variable in APP_KEY DB_DATABASE DB_USERNAME DB_PASSWORD; do
-        grep -Eq "^${required_variable}=.+" "$ENV_FILE" \
-            || { log_error "Missing or empty variable in $ENV_FILE: $required_variable"; exit 1; }
-    done
-
-    install -d -m 700 "$BACKUP_DIR"
-    [[ -w "$BACKUP_DIR" ]] || { log_error "Backup directory is not writable: $BACKUP_DIR"; exit 1; }
-
-    log 'Pre-flight checks passed.'
+  docker exec "$container_id" sh -c \
+    'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" "$@"' \
+    sh "$@"
 }
 
-acquire_lock() {
-    exec 9>/tmp/topscolaire-production-deploy.lock
+db_pg_restore() {
+  local container_id
 
-    if ! flock -n 9; then
-        log_error 'Another TopScolaire deployment is already running.'
-        exit 1
-    fi
+  container_id="$(database_container_id)"
+  [[ -n "$container_id" ]] || fail "Conteneur PostgreSQL introuvable"
 
-    log 'Deployment lock acquired.'
+  docker exec -i "$container_id" sh -c \
+    'exec pg_restore "$@"' \
+    sh "$@"
 }
 
-validate_compose_project() {
-    compose config --quiet
+check_database_infrastructure() {
+  local container_id
+  local mounted_volume
+  local configured_volume
+  local database_name
 
-    local project_name
-    project_name="$(compose config --format json \
-        | sed -n 's/.*"name":[[:space:]]*"\([^"]*\)".*/\1/p' \
-        | head -n 1)"
+  container_id="$(database_container_id)"
+  [[ -n "$container_id" ]] || fail "Conteneur PostgreSQL introuvable"
 
-    if [[ "$project_name" != 'topscolaire' ]]; then
-        log_error "Compose project is '$project_name'; expected 'topscolaire'."
-        exit 1
-    fi
+  [[ "$(docker inspect -f '{{.State.Running}}' "$container_id")" == "true" ]] ||
+    fail "PostgreSQL n'est pas démarré"
+
+  mounted_volume="$(
+    docker inspect "$container_id" \
+      --format '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql"}}{{.Name}}{{end}}{{end}}'
+  )"
+
+  [[ "$mounted_volume" == "$EXPECTED_VOLUME" ]] ||
+    fail "Volume PostgreSQL incorrect : $mounted_volume"
+
+  configured_volume="$(
+    compose config --format json |
+      python3 -c \
+      'import sys,json; print(json.load(sys.stdin)["volumes"]["topscolaire_pg_data"]["name"])'
+  )"
+
+  [[ "$configured_volume" == "$EXPECTED_VOLUME" ]] ||
+    fail "Le volume déclaré dans Compose ne correspond pas au volume de production"
+
+  database_name="$(db_psql -Atqc 'SELECT current_database()')"
+
+  [[ -n "$database_name" ]] ||
+    fail "Connexion à une base inattendue"
 }
 
-update_repository() {
-    local repository="$1"
-    local expected_sha="$2"
-    local target='origin/main'
+check_database() {
+  local actual_uuid
+  local identity_count
 
-    git -C "$repository" fetch origin main --prune
+  check_database_infrastructure
 
-    if [[ -n "$expected_sha" ]]; then
-        is_valid_sha "$expected_sha" \
-            || { log_error "Invalid Git SHA: $expected_sha"; exit 1; }
+  if [[ "$BOOTSTRAP_DATABASE_IDENTITY" == "true" && -z "$EXPECTED_DATABASE_UUID" ]]; then
+    log "Identité PostgreSQL à initialiser après la migration additive"
+    return 0
+  fi
 
-        git -C "$repository" cat-file -e "${expected_sha}^{commit}" 2>/dev/null \
-            || { log_error "Revision $expected_sha is unavailable in $repository"; exit 1; }
+  [[ -n "$EXPECTED_DATABASE_UUID" ]] ||
+    fail "Identité PostgreSQL absente : effectuer le bootstrap explicite avant de redéployer"
 
-        git -C "$repository" merge-base --is-ancestor "$expected_sha" origin/main \
-            || { log_error "Revision $expected_sha is not on origin/main in $repository"; exit 1; }
+  actual_uuid="$(
+    db_psql -Atqc \
+      'SELECT uuid FROM public.deployment_identity WHERE id = 1'
+  )" || fail "Table deployment_identity absente ou illisible"
 
-        target="$expected_sha"
-    fi
+  identity_count="$(
+    db_psql -Atqc \
+      'SELECT COUNT(*) FROM public.deployment_identity'
+  )"
 
-    git -C "$repository" checkout -B main "$target" --quiet
-    log "Updated $(basename "$repository") to $(git -C "$repository" rev-parse --short HEAD)."
+  [[ "$identity_count" == "1" ]] && is_valid_uuid "$actual_uuid" ||
+    fail "Identité PostgreSQL invalide"
+
+  [[ "$actual_uuid" == "$EXPECTED_DATABASE_UUID" ]] ||
+    fail "L'identité PostgreSQL ne correspond pas à celle enregistrée sur le VPS"
+
+  log "PostgreSQL, volume et identité de production vérifiés"
 }
 
-current_frontend_image_tag() {
-    local container_id
-    local image_reference
+if [[ "$ROLLBACK_ONLY" == "true" && -z "$EXPECTED_DATABASE_UUID" ]]; then
+  check_database_infrastructure
+  log "Rollback d'urgence avant bootstrap : volume PostgreSQL vérifié, identité encore absente"
+else
+  check_database
+fi
 
-    container_id="$(compose ps -q frontend 2>/dev/null || true)"
-    [[ -n "$container_id" ]] || return 1
-
-    image_reference="$(docker inspect --format '{{.Config.Image}}' "$container_id" 2>/dev/null || true)"
-    [[ "$image_reference" == bulletinlab/frontend:* ]] || return 1
-
-    printf '%s\n' "${image_reference#bulletinlab/frontend:}"
-}
-
-image_pair_exists() {
-    local image_tag="$1"
-
-    docker image inspect "bulletinlab/api:${image_tag}" >/dev/null 2>&1 \
-        && docker image inspect "bulletinlab/frontend:${image_tag}" >/dev/null 2>&1
-}
-
-previous_image_tag() {
-    local current_tag="$1"
-    local candidate
-
-    while IFS= read -r candidate; do
-        [[ -n "$candidate" && "$candidate" != '<none>' && "$candidate" != "$current_tag" ]] || continue
-
-        if is_valid_image_tag "$candidate" && image_pair_exists "$candidate"; then
-            printf '%s\n' "$candidate"
-            return 0
-        fi
-    done < <(docker images bulletinlab/frontend --format '{{.Tag}}')
-
-    return 1
-}
-
-health_check() {
-    local name="$1"
-    local url="$2"
-    local expected="${3:-}"
-    local attempt
-    local response
-
-    for attempt in $(seq 1 12); do
-        if response="$(curl --fail --silent --show-error --max-time 10 "$url" 2>/dev/null)"; then
-            if [[ -z "$expected" ]] || grep -q "$expected" <<<"$response"; then
-                log "$name is healthy."
-                return 0
-            fi
-        fi
-
-        log "Waiting for $name ($attempt/12)..."
-        sleep 5
-    done
-
-    log_error "$name health check failed: $url"
-    return 1
-}
-
-verify_frontend_release() {
-    LOCAL_RELEASE_HTML="$(mktemp)"
-    PUBLIC_RELEASE_HTML="$(mktemp)"
-
-    curl --fail --silent --show-error --retry 5 --retry-connrefused --retry-delay 3 \
-        -H 'Cache-Control: no-cache' \
-        "http://127.0.0.1:8080/?_release=${IMAGE_TAG}" \
-        --output "$LOCAL_RELEASE_HTML"
-
-    local attempt
-    for attempt in $(seq 1 15); do
-        if curl --fail --silent --show-error --max-time 15 \
-            -H 'Cache-Control: no-cache' \
-            "https://topscolaire.com/?_release=${IMAGE_TAG}&attempt=${attempt}" \
-            --output "$PUBLIC_RELEASE_HTML" \
-            && cmp --silent "$LOCAL_RELEASE_HTML" "$PUBLIC_RELEASE_HTML"; then
-            log 'Public frontend matches the local deployed release.'
-            return 0
-        fi
-
-        log "Waiting for public frontend propagation ($attempt/15)..."
-        sleep 5
-    done
-
-    log_error 'Public frontend does not match the local deployed release.'
-    return 1
-}
-
-verify_application() {
-    health_check 'Local API' 'http://127.0.0.1:8081/up' 'Application up'
-    health_check 'Local frontend' 'http://127.0.0.1:8080/'
-    health_check 'Public API' 'https://topscolaire.com/up' 'Application up'
-    verify_frontend_release
-}
-
-restore_image_pair() {
-    local image_tag="$1"
-
-    is_valid_image_tag "$image_tag" \
-        || { log_error "Invalid rollback image tag: $image_tag"; return 1; }
-    image_pair_exists "$image_tag" \
-        || { log_error "Complete API/frontend image pair not found for tag: $image_tag"; return 1; }
-
-    log "Restoring Docker image pair: $image_tag"
-    export IMAGE_TAG="$image_tag"
-    compose up -d --wait --wait-timeout 300
-    verify_application
-    log "Rollback completed with image tag: $image_tag"
-}
-
-automatic_rollback() {
-    if [[ "$ROLLBACK_ARMED" != true ]]; then
-        log 'Failure occurred before the application rollout; current containers were left unchanged.'
-        return 0
-    fi
-
-    if [[ "$AUTO_ROLLBACK" != true || -z "$PREVIOUS_IMAGE_TAG" ]]; then
-        log_error 'Automatic rollback is unavailable; manual verification is required.'
-        return 0
-    fi
-
-    log "Attempting automatic rollback to $PREVIOUS_IMAGE_TAG..."
-    restore_image_pair "$PREVIOUS_IMAGE_TAG" \
-        || log_error 'Automatic rollback failed; manual intervention is required.'
-}
-
-on_error() {
-    local exit_code="$1"
-    local line="$2"
-    local command="$3"
-
-    trap - ERR
-    log_error "Command failed with exit code $exit_code at line $line: $command"
-    automatic_rollback
-    exit "$exit_code"
-}
-
-trap 'on_error $? ${LINENO} "$BASH_COMMAND"' ERR
-
-wait_for_postgres() {
-    local attempt
-
-    for attempt in $(seq 1 15); do
-        if compose exec -T db sh -c 'pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"' >/dev/null 2>&1; then
-            log 'PostgreSQL accepts connections.'
-            return 0
-        fi
-
-        log "Waiting for PostgreSQL ($attempt/15)..."
-        sleep 3
-    done
-
-    log_error 'PostgreSQL did not become ready.'
-    return 1
-}
+# ============================================
+# 3. SAUVEGARDE POSTGRESQL
+# ============================================
 
 backup_database() {
-    local backup_timestamp
-    local backup_file
-    local attempt
+  local backup
 
-    backup_timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
-    backup_file="${BACKUP_DIR}/topscolaire-${backup_timestamp}-$$.sql.gz"
-    BACKUP_TEMP="${backup_file}.tmp"
-    umask 077
+  backup="$BACKUP_DIR/predeploy-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  BACKUP_TEMP="${backup}.tmp.$$"
 
-    for attempt in 1 2 3; do
-        log "Creating PostgreSQL backup ($attempt/3)..."
-        rm -f -- "$BACKUP_TEMP"
+  log "Sauvegarde PostgreSQL : $backup"
 
-        if compose exec -T db \
-            sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" --no-owner --no-privileges' \
-            | gzip > "$BACKUP_TEMP" \
-            && [[ -s "$BACKUP_TEMP" ]] \
-            && gzip -t "$BACKUP_TEMP"; then
-            mv "$BACKUP_TEMP" "$backup_file"
-            BACKUP_TEMP=""
-            chmod 600 "$backup_file"
-            log "Backup created: $backup_file"
-            return 0
-        fi
+  if ! db_pg_dump \
+    --format=custom \
+    --no-owner \
+    --no-privileges > "$BACKUP_TEMP"; then
+    fail "Échec de la sauvegarde PostgreSQL"
+  fi
 
-        sleep 5
-    done
+  [[ -s "$BACKUP_TEMP" ]] ||
+    fail "Sauvegarde vide"
 
-    log_error 'Unable to create a verified PostgreSQL backup; deployment stopped.'
-    return 1
+  db_pg_restore --list < "$BACKUP_TEMP" > /dev/null ||
+    fail "Sauvegarde illisible"
+
+  mv -- "$BACKUP_TEMP" "$backup"
+  chmod 600 "$backup"
+  BACKUP_TEMP=""
+
+  log "Sauvegarde créée et catalogue vérifié"
 }
 
-run_migrations() {
-    log 'Current migration status:'
-    compose --profile maintenance run --rm migrate php artisan migrate:status || true
+initialize_database_identity() {
+  local actual_uuid
+  local identity_count
 
-    log 'Applying migrations...'
-    compose --profile maintenance run --rm migrate php artisan migrate --force
+  [[ "$BOOTSTRAP_DATABASE_IDENTITY" == "true" && -z "$EXPECTED_DATABASE_UUID" ]] ||
+    return 0
+
+  actual_uuid="$(
+    db_psql -Atqc \
+      "INSERT INTO public.deployment_identity (id, uuid, created_at)
+       VALUES (1, gen_random_uuid(), NOW())
+       ON CONFLICT (id) DO NOTHING;
+       SELECT uuid FROM public.deployment_identity WHERE id = 1"
+  )" || fail "Impossible d'initialiser l'identité PostgreSQL"
+
+  identity_count="$(
+    db_psql -Atqc \
+      'SELECT COUNT(*) FROM public.deployment_identity'
+  )"
+
+  [[ "$identity_count" == "1" ]] && is_valid_uuid "$actual_uuid" ||
+    fail "Identité PostgreSQL initialisée de manière invalide"
+
+  EXPECTED_DATABASE_UUID="$actual_uuid"
+  write_state database-uuid "$actual_uuid"
+
+  log "Identité PostgreSQL permanente enregistrée dans $STATE_DIR/database-uuid"
 }
 
-sync_production_reference_data() {
-    log 'Synchronizing required production reference data...'
-    compose --profile maintenance run --rm migrate \
-        php artisan db:seed --class=Database\\Seeders\\ProductionReferenceSeeder --force
-    log 'Production reference data is complete.'
+# ============================================
+# 4. VERIFICATION ET DEPLOIEMENT DES IMAGES
+# ============================================
+
+verify_seeder_class() {
+  log "Vérification de ProductionReferenceSeeder dans la nouvelle image"
+
+  compose run --rm --no-deps api php -r '
+    require "vendor/autoload.php";
+
+    if (! class_exists("Database\\Seeders\\ProductionReferenceSeeder")) {
+        fwrite(STDERR, "ProductionReferenceSeeder absent de l’image.\n");
+        exit(1);
+    }
+  '
 }
 
-prune_old_artifacts() {
-    find "$BACKUP_DIR" -name 'topscolaire-*.sql.gz' -type f \
-        | sort -r \
-        | tail -n +11 \
-        | xargs -r rm -f
+deploy_images() {
+  local tag="$1"
 
-    docker image prune -f >/dev/null 2>&1 || true
+  export IMAGE_TAG="$tag"
+
+  log "Déploiement IMAGE_TAG=$tag"
+
+  # Ne touche ni à db ni à redis. api-nginx reste une opération d'infrastructure explicite.
+  compose up -d --no-deps --no-build --pull never api
+
+  compose up -d --no-deps --no-build --pull never \
+    queue scheduler
+
+  compose up -d --no-deps --no-build --pull never \
+    frontend
+
+  if [[ "$REDEPLOY_API_NGINX" == "true" ]]; then
+    compose up -d --no-deps --no-build --pull never api-nginx
+  fi
 }
 
-manual_rollback() {
-    local current_tag
-    local target_tag="$ROLLBACK_IMAGE_TAG"
+# ============================================
+# 5. VERIFICATION DES CONTENEURS, HTTP ET POSTGRESQL
+# ============================================
 
-    current_tag="$(current_frontend_image_tag || true)"
+check_application_containers() {
+  local service
+  local container_id
+  local expected_image
+  local actual_image
+  local health
 
-    if [[ -z "$target_tag" ]]; then
-        target_tag="$(previous_image_tag "$current_tag" || true)"
+  for service in api queue scheduler frontend api-nginx; do
+    container_id="$(compose ps -q "$service" 2>/dev/null)"
+    [[ -n "$container_id" ]] || return 1
+
+    [[ "$(docker inspect -f '{{.State.Running}}' "$container_id" 2>/dev/null)" == "true" ]] ||
+      return 1
+
+    case "$service" in
+      api|queue|scheduler)
+        expected_image="bulletinlab/api:$IMAGE_TAG"
+        ;;
+      frontend)
+        expected_image="bulletinlab/frontend:$IMAGE_TAG"
+        ;;
+      *)
+        expected_image=""
+        ;;
+    esac
+
+    if [[ -n "$expected_image" ]]; then
+      actual_image="$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)"
+      [[ "$actual_image" == "$expected_image" ]] || return 1
     fi
 
-    [[ -n "$target_tag" ]] \
-        || { log_error 'No previous complete image pair is available for rollback.'; exit 1; }
-
-    restore_image_pair "$target_tag"
+    if [[ "$service" == "api" || "$service" == "api-nginx" ]]; then
+      health="$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$container_id" 2>/dev/null)"
+      [[ "$health" == "healthy" ]] || return 1
+    fi
+  done
 }
 
-deploy_release() {
-    local start_time
-    local current_tag
-    local duration
+check_health() {
+  local attempt
+  local local_api_healthy=false
 
-    start_time="$(date +%s)"
-
-    update_repository "$APP_DIR" "$EXPECTED_BACKEND_SHA"
-    update_repository "$FRONTEND_DIR" "$EXPECTED_FRONTEND_SHA"
-
-    # Validate the Compose file from the requested backend revision, not the stale server checkout.
-    validate_compose_project
-
-    BACKEND_SHA="$(git -C "$APP_DIR" rev-parse HEAD)"
-    FRONTEND_SHA="$(git -C "$FRONTEND_DIR" rev-parse HEAD)"
-
-    if [[ -n "$EXPECTED_BACKEND_SHA" && "$BACKEND_SHA" != "$EXPECTED_BACKEND_SHA" ]]; then
-        log_error 'Backend SHA mismatch after checkout.'
-        exit 1
+  for attempt in $(seq 1 30); do
+    if curl -fsS --max-time 5 http://127.0.0.1:8081/up |
+      grep -q 'Application up' &&
+      check_application_containers; then
+      local_api_healthy=true
+      break
     fi
 
-    if [[ -n "$EXPECTED_FRONTEND_SHA" && "$FRONTEND_SHA" != "$EXPECTED_FRONTEND_SHA" ]]; then
-        log_error 'Frontend SHA mismatch after checkout.'
-        exit 1
+    sleep 3
+  done
+
+  [[ "$local_api_healthy" == "true" ]] ||
+    fail "API locale, conteneurs applicatifs, images ou healthchecks incorrects"
+
+  for attempt in $(seq 1 12); do
+    if curl -fsS --max-time 15 https://topscolaire.com/up |
+      grep -q 'Application up' &&
+      curl -fsSI --max-time 15 https://topscolaire.com >/dev/null; then
+
+      check_database
+
+      log "Conteneurs, images, API locale et endpoints HTTPS vérifiés"
+      return 0
     fi
 
-    export IMAGE_TAG="main-${BACKEND_SHA:0:12}-${FRONTEND_SHA:0:12}"
-    current_tag="$(current_frontend_image_tag || true)"
+    sleep 5
+  done
 
-    if [[ -n "$current_tag" ]] && image_pair_exists "$current_tag"; then
-        PREVIOUS_IMAGE_TAG="$current_tag"
-        log "Current image pair retained for rollback: $PREVIOUS_IMAGE_TAG"
-    fi
-
-    log "Building image pair: $IMAGE_TAG"
-    compose build --pull api frontend
-    image_pair_exists "$IMAGE_TAG" \
-        || { log_error "Built image pair is incomplete for tag: $IMAGE_TAG"; exit 1; }
-
-    log 'Starting PostgreSQL and Redis...'
-    compose up -d --wait --wait-timeout 180 db redis
-    wait_for_postgres
-
-    backup_database
-    run_migrations
-    sync_production_reference_data
-
-    log 'Rolling out the application stack...'
-    ROLLBACK_ARMED=true
-    compose up -d --wait --wait-timeout 300
-    verify_application
-    ROLLBACK_ARMED=false
-
-    prune_old_artifacts
-
-    duration=$(( $(date +%s) - start_time ))
-    log "Deployment completed in ${duration}s."
-    log "Backend SHA: $BACKEND_SHA"
-    log "Frontend SHA: $FRONTEND_SHA"
-    log "Image tag: $IMAGE_TAG"
+  fail "Application ou endpoints HTTPS inaccessibles après déploiement"
 }
 
-main() {
-    log '=== TopScolaire production operation started ==='
-    check_prerequisites
-    acquire_lock
-    cd "$APP_DIR"
+# ============================================
+# 6. ROLLBACK MANUEL DES IMAGES UNIQUEMENT
+# ============================================
 
-    if [[ "$ROLLBACK_ONLY" == true ]]; then
-        validate_compose_project
-        manual_rollback
-    else
-        deploy_release
-    fi
-}
+if [[ "$ROLLBACK_ONLY" == "true" ]]; then
 
-main "$@"
+  tag="${ROLLBACK_IMAGE_TAG:-}"
+  active_tag=""
+
+  if [[ -s "$STATE_DIR/current-tag" ]]; then
+    active_tag="$(cat "$STATE_DIR/current-tag")"
+  fi
+
+  if [[ -z "$tag" ]]; then
+    [[ -s "$STATE_DIR/previous-tag" ]] ||
+      fail "Aucun tag précédent enregistré"
+
+    tag="$(cat "$STATE_DIR/previous-tag")"
+  fi
+
+  [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] ||
+    fail "Tag invalide"
+
+  docker image inspect "bulletinlab/api:$tag" >/dev/null ||
+    fail "Image backend absente"
+
+  docker image inspect "bulletinlab/frontend:$tag" >/dev/null ||
+    fail "Image frontend absente"
+
+  deploy_images "$tag"
+  check_health
+
+  if [[ -n "$active_tag" && "$active_tag" != "$tag" ]]; then
+    write_state previous-tag "$active_tag"
+  fi
+
+  write_state current-tag "$tag"
+
+  log "Retour aux anciennes images terminé"
+  log "PostgreSQL n'a pas été restauré ni modifié"
+
+  exit 0
+fi
+
+# ============================================
+# 7. IDENTIFICATION ET PROPRETE DES DEPOTS
+# ============================================
+
+BACKEND_SHA="${EXPECTED_BACKEND_SHA:-}"
+FRONTEND_SHA="${EXPECTED_FRONTEND_SHA:-}"
+
+[[ "$BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+  fail "SHA backend invalide"
+
+[[ "$FRONTEND_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+  fail "SHA frontend invalide"
+
+NEW_TAG="main-${BACKEND_SHA:0:12}-${FRONTEND_SHA:0:12}"
+OLD_TAG=""
+
+if [[ -s "$STATE_DIR/current-tag" ]]; then
+  OLD_TAG="$(cat "$STATE_DIR/current-tag")"
+fi
+
+log "Backend : $BACKEND_SHA"
+log "Frontend : $FRONTEND_SHA"
+
+git -C "$ROOT" fetch origin main --prune
+git -C "$ROOT/frontend" fetch origin main --prune
+
+git -C "$ROOT" cat-file -e "${BACKEND_SHA}^{commit}" 2>/dev/null ||
+  fail "Commit backend inaccessible"
+
+git -C "$ROOT/frontend" cat-file -e "${FRONTEND_SHA}^{commit}" 2>/dev/null ||
+  fail "Commit frontend inaccessible"
+
+git -C "$ROOT" merge-base --is-ancestor "$BACKEND_SHA" origin/main ||
+  fail "Le commit backend demandé n'appartient pas à origin/main"
+
+git -C "$ROOT/frontend" merge-base --is-ancestor "$FRONTEND_SHA" origin/main ||
+  fail "Le commit frontend demandé n'appartient pas à origin/main"
+
+[[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=all -- . ':(exclude).deploy-state/**')" ]] ||
+  fail "Le dépôt backend contient des modifications locales"
+
+[[ -z "$(git -C "$ROOT/frontend" status --porcelain --untracked-files=all)" ]] ||
+  fail "Le dépôt frontend contient des modifications locales"
+
+git -C "$ROOT" checkout --detach "$BACKEND_SHA"
+git -C "$ROOT/frontend" checkout --detach "$FRONTEND_SHA"
+
+compose config --quiet
+
+# ============================================
+# 8. CONTROLE STRICT DES CHANGEMENTS DE MIGRATIONS
+# ============================================
+
+[[ -s "$STATE_DIR/backend-sha" ]] ||
+  fail "Premier déploiement non initialisé : renseigner .deploy-state/backend-sha après audit manuel"
+
+OLD_BACKEND_SHA="$(cat "$STATE_DIR/backend-sha")"
+
+[[ "$OLD_BACKEND_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+  fail "Ancien SHA backend invalide"
+
+git cat-file -e "${OLD_BACKEND_SHA}^{commit}" 2>/dev/null ||
+  fail "Ancien commit introuvable : contrôle des migrations impossible"
+
+git merge-base --is-ancestor "$OLD_BACKEND_SHA" "$BACKEND_SHA" ||
+  fail "L'ancien SHA n'est pas un ancêtre du déploiement demandé"
+
+NEW_MIGRATIONS=()
+
+migration_changes="$(
+  git diff --name-status --find-renames \
+    "$OLD_BACKEND_SHA" "$BACKEND_SHA" -- database/migrations
+)" || fail "Impossible de contrôler les changements de migrations"
+
+while IFS=$'\t' read -r status path extra_path; do
+  [[ -n "$status" ]] || continue
+
+  case "$status" in
+    A)
+      [[ "$path" == database/migrations/*.php && -z "$extra_path" ]] ||
+        fail "Seules les nouvelles migrations PHP additives sont acceptées : $status $path"
+      NEW_MIGRATIONS+=("$path")
+      ;;
+    *)
+      fail "Modification, suppression ou renommage d'une migration existante interdit : $status $path"
+      ;;
+  esac
+done <<< "$migration_changes"
+
+if (( ${#NEW_MIGRATIONS[@]} > 0 )); then
+  printf '[TOPSCOLAIRE] Nouvelle migration : %s\n' "${NEW_MIGRATIONS[@]}"
+
+  [[ "$APPROVE_MIGRATIONS" == "true" ]] ||
+    fail "Nouvelles migrations détectées : revue et approbation manuelle obligatoires après tests PostgreSQL 18"
+
+  log "Nouvelles migrations explicitement approuvées ; aucune migration existante modifiée"
+fi
+
+# ============================================
+# 9. CONSTRUCTION DES IMAGES
+# ============================================
+
+export IMAGE_TAG="$NEW_TAG"
+
+compose config --quiet
+
+log "Construction des images"
+
+compose build api frontend
+
+docker image inspect "bulletinlab/api:$NEW_TAG" >/dev/null ||
+  fail "Image backend construite introuvable"
+
+docker image inspect "bulletinlab/frontend:$NEW_TAG" >/dev/null ||
+  fail "Image frontend construite introuvable"
+
+check_database
+verify_seeder_class
+
+# ============================================
+# 10. SAUVEGARDE ET MIGRATIONS
+# ============================================
+
+backup_database
+
+log "Application des migrations en attente"
+
+compose --profile maintenance \
+  run --rm --no-deps migrate
+
+check_database_infrastructure
+initialize_database_identity
+check_database
+
+# ============================================
+# 11. SEEDER DE PRODUCTION IDEMPOTENT
+# ============================================
+
+log "Synchronisation des référentiels de production"
+
+compose run --rm --no-deps api \
+  php artisan db:seed \
+  --class='Database\Seeders\ProductionReferenceSeeder' \
+  --force \
+  --no-interaction
+
+check_database
+
+# ============================================
+# 12. MISE EN SERVICE DES NOUVELLES IMAGES
+# ============================================
+
+# En cas d'échec du rollout, le rollback manuel cible la dernière image active.
+if [[ -n "$OLD_TAG" && "$OLD_TAG" != "$NEW_TAG" ]]; then
+  write_state previous-tag "$OLD_TAG"
+fi
+
+deploy_images "$NEW_TAG"
+check_health
+
+# ============================================
+# 13. MEMORISATION DES VERSIONS
+# ============================================
+
+write_state current-tag "$NEW_TAG"
+write_state backend-sha "$BACKEND_SHA"
+write_state frontend-sha "$FRONTEND_SHA"
+
+log "Déploiement réussi : $NEW_TAG"

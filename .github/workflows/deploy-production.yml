@@ -20,6 +20,21 @@ on:
         description: Optional IMAGE_TAG to restore; empty selects the previous image
         required: false
         type: string
+      approve_migrations:
+        description: Approve new migrations after review and PostgreSQL 18 tests
+        required: false
+        type: boolean
+        default: false
+      bootstrap_database_identity:
+        description: Initialize the permanent database identity after its additive migration
+        required: false
+        type: boolean
+        default: false
+      redeploy_api_nginx:
+        description: Apply an explicitly reviewed api-nginx infrastructure change
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +49,27 @@ jobs:
     if: ${{ !inputs.rollback }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: topscolaire_test
+          POSTGRES_USER: topscolaire
+          POSTGRES_PASSWORD: topscolaire_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U topscolaire -d topscolaire_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_CONNECTION: pgsql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 5432
+      DB_DATABASE: topscolaire_test
+      DB_USERNAME: topscolaire
+      DB_PASSWORD: topscolaire_test
     steps:
       - name: Checkout backend
         uses: actions/checkout@v7
@@ -42,9 +78,10 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.4'
-          extensions: bcmath, dom, fileinfo, gd, mbstring, pcntl, pdo_sqlite, sqlite3, zip
+          extensions: bcmath, dom, fileinfo, gd, mbstring, pcntl, pdo_pgsql, pdo_sqlite, pgsql, sqlite3, zip
           coverage: none
           ini-file: production
+          ini-values: memory_limit=512M
 
       - name: Configure Node.js
         uses: actions/setup-node@v7
@@ -69,7 +106,10 @@ jobs:
       - name: Check PHP formatting
         run: vendor/bin/pint --test
 
-      - name: Run Laravel tests
+      - name: Test migrations on PostgreSQL 18
+        run: php artisan migrate:fresh --force --no-interaction
+
+      - name: Run Laravel tests on PostgreSQL 18
         run: php artisan test --compact
 
       - name: Build Laravel assets
@@ -217,6 +257,9 @@ jobs:
         env:
           EXPECTED_BACKEND_SHA: ${{ github.sha }}
           EXPECTED_FRONTEND_SHA: ${{ steps.frontend.outputs.sha }}
+          APPROVE_MIGRATIONS: ${{ inputs.approve_migrations }}
+          BOOTSTRAP_DATABASE_IDENTITY: ${{ inputs.bootstrap_database_identity }}
+          REDEPLOY_API_NGINX: ${{ inputs.redeploy_api_nginx }}
           SSH_HOST: ${{ secrets.TOPSCOLAIRE_PROD_HOST }}
           SSH_USER: ${{ secrets.TOPSCOLAIRE_PROD_USER }}
         run: |
@@ -226,8 +269,8 @@ jobs:
           fi
 
           printf -v remote_command \
-            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q AUTO_ROLLBACK=true ENV_FILE=/opt/topscolaire/.env.production bash -s' \
-            "$EXPECTED_BACKEND_SHA" "$EXPECTED_FRONTEND_SHA"
+            'EXPECTED_BACKEND_SHA=%q EXPECTED_FRONTEND_SHA=%q APPROVE_MIGRATIONS=%q BOOTSTRAP_DATABASE_IDENTITY=%q REDEPLOY_API_NGINX=%q ENV_FILE=/opt/topscolaire/.env.production bash -s' \
+            "$EXPECTED_BACKEND_SHA" "$EXPECTED_FRONTEND_SHA" "$APPROVE_MIGRATIONS" "$BOOTSTRAP_DATABASE_IDENTITY" "$REDEPLOY_API_NGINX"
 
           ssh \
             -i "$HOME/.ssh/topscolaire" \

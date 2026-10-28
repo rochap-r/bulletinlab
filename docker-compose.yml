@@ -86,6 +86,8 @@ services:
       - artisan
       - migrate
       - --force
+      - --no-interaction
+      - --no-ansi
     volumes: *app-storage
     depends_on:
       db:
@@ -211,11 +213,14 @@ services:
 
 volumes:
   topscolaire_pg_data:
-    driver: local
+    external: true
+    name: topscolaire_topscolaire_pg_data
   topscolaire_redis_data:
-    driver: local
+    external: true
+    name: topscolaire_topscolaire_redis_data
   topscolaire_api_storage:
-    driver: local
+    external: true
+    name: topscolaire_topscolaire_api_storage
 
 networks:
   backend:
