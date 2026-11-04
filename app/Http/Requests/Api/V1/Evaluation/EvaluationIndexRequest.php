@@ -4,6 +4,7 @@ namespace App\Http\Requests\Api\V1\Evaluation;
 
 use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Enums\StatutEvaluation;
+use App\Models\Utilisateur;
 use Illuminate\Contracts\Auth\Access\Gate;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -14,6 +15,15 @@ final class EvaluationIndexRequest extends FormRequest
     public function authorize(Gate $gate, EstablishmentContext $context): bool
     {
         return $this->user() !== null;
+    }
+
+    public function teacher(): Utilisateur
+    {
+        $user = $this->user();
+
+        return $user instanceof Utilisateur
+            ? $user
+            : throw new \LogicException("L'enseignant authentifié est introuvable.");
     }
 
     /**
@@ -27,7 +37,7 @@ final class EvaluationIndexRequest extends FormRequest
             'node_id' => ['sometimes', 'exists:modele_nodes,id'],
             'type_evaluation_id' => ['sometimes', 'exists:types_evaluations,id'],
             'statut' => ['sometimes', Rule::in(StatutEvaluation::values())],
-            'per_page' => ['sometimes', 'integer:strict', 'min:1', 'max:100'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
         ];
     }
 }

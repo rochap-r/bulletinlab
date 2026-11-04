@@ -260,22 +260,21 @@ notes (
 
 **Recommandation :** conserver `notes.valeur` comme projection finale consommée par le moteur de bulletin. Une école peut rester en saisie `DIRECTE` pendant la migration, puis passer à `EVALUATIONS` après validation de sa règle. Il ne faut pas ajouter une deuxième colonne de valeur qui créerait deux sources de vérité.
 
-### 4.3 Règles de calcul (exemple secondaire)
+### 4.3 Règles de calcul validées pour le secondaire
 
-Pour une période donnée (ex. Trimestre 1) et une matière (ex. Mathématiques) :
+Pour chaque cours et période, le mode par évaluations repose sur un canevas référentiel unique : Exercice / Devoir `¼`, Cotation du cahier `¼` et Interrogation `½`. Le maximum officiel reste la seule source de vérité du bulletin.
 
-| Composante | Valeur | Maxima | Coefficient | Points |
-|------------|--------|--------|-------------|--------|
-| Interrogation 1 | 7 | 10 | 1 | 7 |
-| Devoir maison | 14 | 20 | 1 | 14 |
-| Cahier | 15 | 15 | 0.5 | 7.5 |
-| **Total pondéré** | — | — | — | **28.5 / 37.5** |
+Le barème de correction affiché à l’enseignant et au parent peut être plus familier que son poids réel au bulletin. Le quart est arrondi vers un barème lisible, puis l’interrogation reçoit exactement le double de ce barème visible. Chaque résultat est ensuite converti ainsi : `résultat × poids bulletin / barème de correction`.
 
-Ratio pondéré = `(7 + 14 + 15×0,5) / (10 + 20 + 15×0,5)` = `28,5 / 37,5` = `76 %`.
+| Maximum officiel | Barèmes de correction | Poids bulletin | Exemple de conversion |
+|------------------|------------------------|----------------|-----------------------|
+| 5 | `5 + 5 + 10` | `1,25 + 1,25 + 2,5` | `4/5` au devoir vaut `1/5` au bulletin |
+| 20 | `5 + 5 + 10` | `5 + 5 + 10` | `4 + 3 + 8 = 15/20` |
+| 30 | `10 + 10 + 20` | `7,5 + 7,5 + 15` | `8/10 + 6/10 + 14/20 = 21/30` |
+| 40 | `10 + 10 + 20` | `10 + 10 + 20` | `6 + 7 + 15 = 28/40` |
+| 50 | `20 + 20 + 40` | `12,5 + 12,5 + 25` | l’interrogation `/40` pèse toujours 25 points |
 
-Si le maximum officiel de la période est 20, la note projetée est `15,20 / 20`.
-
-Le barème doit être configurable : catégories obligatoires ou facultatives, nombre minimal d'activités, coefficient par activité ou poids par catégorie, traitement des absences, arrondi et maximum officiel. Il ne faut pas coder en dur « exactement une interrogation + un devoir + un cahier ».
+Cette règle fixe concerne le secondaire demandé. Le primaire reste volontairement hors de ce canevas jusqu’à réception de ses règles pédagogiques propres.
 
 ### 4.4 Primaire vs Secondaire
 
@@ -428,8 +427,8 @@ La conformité locale et les durées de conservation devront être validées par
 | Audit logs | ✅ Itération 6.1 — création d'évaluation et création/modification de résultat tracées dans `audit_logs` avec acteur, tenant, anciennes/nouvelles valeurs, IP et user-agent (5 tests enseignant, 30 assertions) |
 | Feature flags | ✅ Itération 6.2 — `tenants.espace_parents_actif`, gestion via l'API plateforme, filtrage immédiat des enfants et du détail des évaluations ; réactivation testée (6 tests portail, 55 assertions ; 21 tests plateforme, 109 assertions) |
 | Correctif affichage évaluations | ✅ `ResponsableEnfantEvaluationsController` renvoie un état vide (élève, classe, évaluations vides) au lieu de 404 quand l'élève n'a pas d'inscription/classe active ; `EnfantEvaluationsSection` ajoute un fallback `queryFn` pour ne jamais passer `undefined` à React Query |
-| Interface enseignant des évaluations | ✅ Itération 6.3 (28/10/2026) — le maillon manquant du workflow est comblé : `GET /types-evaluations` (types actifs), `POST /evaluations/{id}/publication` (brouillon → publiée, avec `visible_parents_at`, verrou de période et audit `EVALUATION_PUBLIEE`), pages enseignant `/enseignant/cours/{id}/evaluations` (liste, création par dialog, publication) et `/enseignant/evaluations/{id}/resultats` (grille élèves : présent/absent/dispensé, note bornée au maximum, commentaire parent, enregistrement des seules lignes modifiées). Accès depuis les cartes de cours (`/enseignant`) et la feuille de notes. 4 tests Pest (types, publication, double publication 422, isolation 404) et 9 tests Vitest ; correctif `step="any"` sur les champs numériques (le `stepMismatch` HTML5 bloquait la soumission native). |
-| Notation de période — deux modes de saisie | ✅ Implémenté — Option 1 : saisie par évaluation (exercice/devoir/interro/cahier) avec extrapolation vers le total de référence de la période ; Option 2 : saisie directe d'une note de période sans évaluations intermédiaires. Concerne l'espace enseignant (saisie) et l'espace parent (affichage « X / Y »). Migration `resultats_evaluations` (`valeur_directe`, `maxima_reference`, `saisie_directe`), `EvaluationCalculationService::compute()` gère les deux modes, endpoints enseignant et parent exposent les nouveaux champs. |
+| Interface enseignant des évaluations | ✅ Itération 6.4 (29/10/2026) — le formulaire de création libre a été remplacé par un flux attaché au créneau officiel : choix d'une période éligible, activation idempotente du canevas, puis grille unique avec tous les élèves et les colonnes « Exercice / Devoir », « Cotation du cahier », « Interrogation » et « Total période ». Les anciennes pages unitaires restent compatibles, mais ne sont plus le parcours principal. |
+| Notation de période — deux modes de saisie | ✅ Implémenté selon la règle métier corrigée — Option 1 : canevas automatique fixe `¼ + ¼ + ½` dérivé du maximum officiel du cours ; Option 2 : saisie directe dans `notes`. Le choix du mode évaluations crée exactement trois lignes référentielles et verrouille la saisie directe pour ce cours et cette période. Aucune valeur directe n'est stockée dans `resultats_evaluations` : `notes.valeur` reste l'unique projection officielle du bulletin. |
 | PWA offline | ✅ Présent — `responsable-offline.ts` : snapshots chiffrés AES-GCM (clé dérivée du marqueur de session), TTL 24 h, repli automatique sur le cache en cas de panne réseau pour la liste des enfants et le détail des évaluations |
 | Monitoring | ✅ Présent — middleware `MonitorResponsableRead` sur les lectures parent + `Platform/ResponsableMonitoringController` pour la supervision plateforme |
 | Documentation utilisateur | ⏳ Guide parent (non demandé, mais recommandé) |
@@ -440,33 +439,29 @@ La conformité locale et les durées de conservation devront être validées par
 
 ### Contexte
 
-Le `EvaluationCalculationService` calcule déjà la note de période à partir des composantes (somme pondérée des évaluations), mais deux attentes fonctionnelles ne sont pas couvertes :
-
-1. **Extrapolation vers le total de référence de la période** : si l'enseignant pose un exercice sur 10, une cotation sur 10 et une interrogation sur 20 pour une période dont le total attendu est 40 pts, un élève ayant 5 + 2 + 12 doit voir affiché **19 / 40** (et non seulement un pourcentage).
-2. **Saisie directe de la période** : l'enseignant doit pouvoir saisir directement une note de période (ex: 19 / 40) sans créer d'évaluations intermédiaires.
-
-Ces deux modes concernent l'**espace enseignant** (saisie) et l'**espace parent** (affichage du détail « X / Y »).
+Pour chaque cours et chaque période saisissable du secondaire, l'enseignant choisit l'un des deux modes. Le maximum ne vient jamais du formulaire d'évaluation : il vient exclusivement du `ModeleMaximum` officiel du cours et de la période.
 
 ### Analyse des deux options
 
 | Option | Principe | Faisabilité | Impact enseignant | Impact parent | Complexité |
 |--------|----------|-------------|-------------------|---------------|------------|
-| **Option 1 — Par évaluation** | Créer plusieurs évaluations pour une matière/période (exercice 10, cahier 10, interro 20). Le service somme `valeur × coefficient` et extrapole vers le `maxima_reference` de la période (ex: 40 pts). | **Haute** — la somme existe déjà ; il reste à ajouter `maxima_reference` et l'affichage « X / Y ». | Ajout d'un champ « total attendu de la période » par matière/période lors de la création ou du paramétrage de l'évaluation. | Affichage « 19 / 40 » dans le détail des évaluations au lieu d'un pourcentage pur. | Faible à moyenne |
-| **Option 2 — Saisie directe** | L'enseignant saisit directement la note de période (ex: 19 / 40) sans créer d'évaluations intermédiaires. Un flag `saisie_directe` court-circuite l'agrégation par composantes. | **Moyenne** — nécessite un nouveau champ `valeur_directe` + `maxima_reference` sur `resultats_evaluations`, une modification du `compute()` et des endpoints. | Formulaire simplifié : un seul champ de saisie par élève et par période. | Affichage de la valeur directe avec son maxima (ex: 19 / 40), indépendamment des composantes. | Moyenne |
+| **Option 1 — Par évaluations** | Le système crée exactement trois composantes pondérées : Exercice / Devoir = `max / 4`, Cotation du cahier = `max / 4`, Interrogation = `max / 2`. Le quart est arrondi vers un barème lisible et l’interrogation affiche exactement le double. | **Haute** — barème déterministe et contrôlé par la base. | Une seule grille classe × trois colonnes ; aucun maximum ni coefficient à saisir. | Barèmes familiers (`4/5`, `12/20`) et note officielle convertie. | Faible |
+| **Option 2 — Saisie directe** | L'enseignant saisit directement la note officielle de période dans la feuille de notes. | **Déjà supportée** — `notes.origine = DIRECTE`. | Une seule cellule par élève et période. | Note de période uniquement, sans faux détail d'évaluations. | Faible |
 
 ### Recommandation d'implémentation
 
-Implémenter les deux options de façon cohérente :
-
-1. **Migration** sur `resultats_evaluations` : ajouter `valeur_directe` (decimal, nullable), `maxima_reference` (decimal, nullable), `saisie_directe` (boolean, default false).
-2. **`EvaluationCalculationService::compute()`** : accepter en option `valeur_directe` / `maxima_reference`. Si `saisie_directe` est true, retourner directement cette note sur cette base sans sommer les composantes. Sinon, sommer les composantes et extrapoler vers `maxima_reference` si fourni.
-3. **Endpoint enseignant** `POST /evaluations/{id}/resultats` : accepter optionnellement `valeur_directe`, `maxima_reference` et `saisie_directe` par résultat.
-4. **Endpoint parent** `GET /enfants/{lien}/evaluations` : exposer `valeur_directe`, `maxima_reference` et `saisie_directe` pour affichage « X / Y ».
-5. **Tests** : unitaires sur le calcul (les deux modes) + d'isolation sur les endpoints enseignant et parent.
+1. Ajouter `evaluations.composante_modele`, nullable pour préserver l'historique, avec une contrainte unique `(tenant, classe, cours, période, composante)`. Le canevas survit ainsi au remplacement d'un enseignant.
+2. Exposer un endpoint idempotent lié à l'attribution et au créneau officiel. Il crée les trois composantes publiées et journalise chaque création.
+3. Répartir le maximum en centimes : deux quarts arrondis vers le bas, puis affecter le reliquat à l'interrogation. La somme des poids reste exactement égale au maximum officiel.
+4. Séparer `maxima` (barème de correction visible) et `maxima_bulletin` (poids réel). Arrondir le quart à 5 jusqu'à 5, 10 jusqu'à 10, puis à la dizaine supérieure ; le barème visible de l’interrogation est toujours le double du quart arrondi. Exemples : cours sur 30 → correction `10 + 10 + 20`, poids `7,5 + 7,5 + 15` ; cours sur 50 → correction `20 + 20 + 40`, poids `12,5 + 12,5 + 25`.
+5. Convertir chaque résultat par `résultat × maxima_bulletin / maxima`. Ainsi `8/10` pesant 7,5 vaut 6 points au bulletin.
+6. Durant une saisie progressive, réserver le poids des trois composantes : une seule composante ne peut jamais être extrapolée comme si elle représentait toute la période.
+7. Projeter à l'écriture le total dans `notes` avec `origine = EVALUATIONS`. Les lectures du bulletin et du parent utilisent cette projection indexée et ne recalculent pas toute la classe.
+8. Côté parent, afficher le barème lisible et le poids bulletin pour les trois composantes seulement en mode évaluations ; en saisie directe, afficher uniquement la note de période.
 
 ### Statut
 
-✅ **Implémenté** — Migration `resultats_evaluations` ajoutée (`valeur_directe`, `maxima_reference`, `saisie_directe`), `EvaluationCalculationService::compute()` accepte `valeurDirecte`/`maximaReference` optionnels, `EvaluationService::storeResultats()` persiste les nouveaux champs avec audit, endpoints enseignant et parent exposent `valeur_directe`/`maxima_reference`/`saisie_directe`, frontend affiche « X / Y » et badge « Direct ». Tests unitaires (8) et feature (enseignant + parent) ajoutés.
+✅ **Implémenté et revu le 30/10/2026** — canevas automatique idempotent, distinction barème de correction / poids bulletin, interrogation affichée sur le double du quart arrondi, cas 5, 20, 30, 40 et 50 couverts, grille unique, conversion et projection progressive correctes, blocage de la saisie directe et détail parent conservé. Une migration aligne également les canevas déjà créés et convertit proportionnellement leurs résultats, sans modifier la note officielle. Les anciennes recommandations plaçant une note directe dans `resultats_evaluations` sont abandonnées : cette responsabilité appartient à `notes`.
 
 ---
 
@@ -493,15 +488,17 @@ Implémenter les deux options de façon cohérente :
 - [x] Un lien `EN_ATTENTE` ou révoqué ne donne aucun accès via les relations et scopes vérifiés de la fondation.
 - [x] La base refuse un lien dont le `tenant_id` diffère de celui de l'élève.
 - [x] Le login ne révèle aucun enfant ni aucune école ; la réponse d’échec reste générique.
-- [x] Un enseignant peut saisir interrogation, devoir, exercice, cahier pour une période et une matière. (endpoints itération 4.3)
-- [x] Le système calcule automatiquement la note de période à partir des composantes. (service itération 4.2)
+- [x] Un enseignant active un canevas unique par cours et période : Exercice / Devoir `¼`, Cotation du cahier `¼`, Interrogation `½`.
+- [x] Le maximum de chaque composante est dérivé automatiquement du maximum officiel, sans saisie manuelle ni duplication du barème.
+- [x] Le barème de correction visible est séparé du poids bulletin et la conversion proportionnelle couvre notamment les maxima 5, 20, 30, 40 et 50.
+- [x] Le système additionne les points réels et projette automatiquement la note de période dans `notes`.
 - [x] Un parent consulte le détail des évaluations de son enfant pour chaque période. (endpoint itération 4.4 et affichage itération 5.2)
-- [x] Notation de période — deux modes de saisie : (1) par évaluation avec extrapolation vers le total de référence (ex: 19/40), (2) saisie directe d'une note de période. (enseignant + parent, backend + frontend)
-- [ ] Notation de période : deux modes de saisie (enseignant + parent) — Option 1 saisie par évaluation avec extrapolation vers le total de référence, Option 2 saisie directe de la note de période. (tâche prioritaire section 8)
+- [x] Notation de période — deux modes exclusifs : canevas d'évaluations automatique ou saisie directe dans la feuille de notes.
+- [x] Un cours sur 20 produit `5 + 5 + 10`, un cours sur 30 produit `10 + 10 + 20`, un cours sur 40 produit `10 + 10 + 20` et un cours sur 50 produit `20 + 20 + 40`, sans modifier leurs poids officiels respectifs.
 - [x] Aucun `tenant_id` n'est accepté en provenance du client (règle d'or du projet) : les endpoints enseignant et parent résolvent le tenant via `EstablishmentContext` / `$request->user()`.
-- [x] Les Phases 1 et 2 backend passent la suite complète : 564 tests, 18 029 assertions.
+- [x] La suite backend complète passe : 604 tests, 18 277 assertions (30/10/2026).
 - [x] `pint --dirty --format agent` passe.
-- [x] Le frontend complet passe : 45 fichiers et 346 tests Vitest, plus le build TypeScript/Vite/PWA.
+- [x] La suite frontend complète passe : 48 fichiers, 359 tests Vitest, plus le typage, le lint et le build TypeScript/Vite/PWA (30/10/2026).
 - [x] Le lien « Espace parents », la connexion, le changement initial, le tableau de bord multi-écoles et la fiche enfant sont présents.
 
 ---
@@ -522,7 +519,7 @@ Implémenter les deux options de façon cohérente :
 
 ## 10. Recommandation immédiate et ordre de réalisation
 
-**Le plan est désormais implémenté de bout en bout (28/10/2026).** L'identité globale `Responsable`, les liens tenant-scopés, l'authentification Sanctum, le changement initial obligatoire, le portail parent multi-écoles, les évaluations par composantes (interrogation, exercice, devoir, cahier), le calcul et la projection de la note de période, les deux modes de saisie (par évaluation ou directe), l'interface enseignant complète, l'audit, les feature flags, le PWA offline et le monitoring sont en place et couverts par les tests.
+**Le plan est désormais implémenté de bout en bout et corrigé selon le barème référentiel (30/10/2026).** L'identité globale `Responsable`, les liens tenant-scopés, l'authentification Sanctum, le changement initial obligatoire, le portail parent multi-écoles, le canevas automatique `¼ + ¼ + ½`, la projection de la note de période, les deux modes exclusifs de saisie, l'audit, les feature flags, le PWA offline et le monitoring sont en place.
 
 Prochaines étapes fonctionnelles possibles (hors plan initial) : spécification du primaire avec les écoles pilotes, renforcement de l'authentification parent (OTP/passkey), guide utilisateur parent, et annexe « Détail des évaluations » dans le PDF du bulletin.
 

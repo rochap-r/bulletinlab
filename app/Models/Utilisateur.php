@@ -210,6 +210,27 @@ class Utilisateur extends Model implements Authenticatable, AuthorizableContract
             ->exists();
     }
 
+    public function hasRoleInOwnTenant(string|array $codes): bool
+    {
+        $codes = is_array($codes) ? $codes : [$codes];
+
+        return Role::query()
+            ->join('utilisateur_roles', 'roles.id', '=', 'utilisateur_roles.role_id')
+            ->where('utilisateur_roles.model_type', $this->getMorphClass())
+            ->where('utilisateur_roles.utilisateur_id', $this->getKey())
+            ->whereIn('roles.name', $codes)
+            ->where(fn (Builder $query) => $query->whereNull('roles.tenant_id')->orWhere('roles.tenant_id', $this->tenant_id))
+            ->where(fn (Builder $query) => $query->whereNull('utilisateur_roles.tenant_id')->orWhere('utilisateur_roles.tenant_id', $this->tenant_id))
+            ->exists();
+    }
+
+    public function isSchoolPasswordResetManager(): bool
+    {
+        return $this->hasTenantRole('PREFET')
+            || ($this->hasTenantRole('GESTIONNAIRE_ECOLE')
+                && $this->etablissement?->type_etablissement === 'SECONDAIRE');
+    }
+
     /**
      * Permission Spatie + vérification du scope tenant.
      */

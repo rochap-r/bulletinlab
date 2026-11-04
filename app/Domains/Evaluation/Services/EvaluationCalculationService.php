@@ -49,17 +49,20 @@ final class EvaluationCalculationService
      *     libelle: string,
      *     type_evaluation: string|null,
      *     maxima: float,
+     *     maxima_bulletin?: float|null,
      *     coefficient: float,
      *     statut_resultat: string|null,
      *     valeur: float|null,
      * }>  $composantes
      * @param  float|null  $valeurDirecte  Note saisie directement pour la periode (optionnel)
      * @param  float|null  $maximaReference  Total de reference de la periode (optionnel)
+     * @param  bool  $inclureMaximaNonSaisis  Réserve les maxima du canevas fixe pendant une saisie progressive
      */
     public function compute(
         array $composantes,
         ?float $valeurDirecte = null,
         ?float $maximaReference = null,
+        bool $inclureMaximaNonSaisis = false,
     ): EvaluationAggregate {
         // Mode saisie directe : on retourne la valeur directe telle quelle.
         if ($valeurDirecte !== null) {
@@ -88,6 +91,9 @@ final class EvaluationCalculationService
 
         foreach ($composantes as $composante) {
             $maximaBase = (float) $composante['maxima'];
+            $maximaBulletin = isset($composante['maxima_bulletin'])
+                ? (float) $composante['maxima_bulletin']
+                : null;
             $coefficient = (float) $composante['coefficient'];
             $statut = $composante['statut_resultat'];
             $valeur = $composante['valeur'];
@@ -100,6 +106,7 @@ final class EvaluationCalculationService
                 'libelle' => $composante['libelle'],
                 'type_evaluation' => $composante['type_evaluation'],
                 'maxima' => $maximaBase,
+                'maxima_bulletin' => $maximaBulletin,
                 'coefficient' => $coefficient,
                 'statut_resultat' => $statut,
                 'valeur' => $valeur,
@@ -108,15 +115,21 @@ final class EvaluationCalculationService
 
             if (! $prisEnCompte) {
                 $ligne['points'] = 0.0;
-                $ligne['maxima_pondere'] = 0.0;
+                $ligne['maxima_pondere'] = $inclureMaximaNonSaisis
+                    ? ($maximaBulletin ?? round($maximaBase * $coefficient, 2))
+                    : 0.0;
+                $maxima += $ligne['maxima_pondere'];
                 $lignes[] = $ligne;
 
                 continue;
             }
 
             $valeur = (float) $valeur;
-            $points = round($valeur * $coefficient, 2);
-            $maximaPondere = round($maximaBase * $coefficient, 2);
+            $maximaPondere = $maximaBulletin
+                ?? round($maximaBase * $coefficient, 2);
+            $points = $maximaBulletin !== null && $maximaBase > 0
+                ? round($valeur / $maximaBase * $maximaBulletin, 2)
+                : round($valeur * $coefficient, 2);
 
             $obtenu += $points;
             $maxima += $maximaPondere;
@@ -183,6 +196,9 @@ final class EvaluationCalculationService
                 'libelle' => $evaluation->libelle,
                 'type_evaluation' => $evaluation->typeEvaluation?->code,
                 'maxima' => (float) $evaluation->maxima,
+                'maxima_bulletin' => $evaluation->maxima_bulletin !== null
+                    ? (float) $evaluation->maxima_bulletin
+                    : null,
                 'coefficient' => (float) $evaluation->coefficient,
                 'statut_resultat' => $resultat?->statut_resultat,
                 'valeur' => $resultat?->valeur,

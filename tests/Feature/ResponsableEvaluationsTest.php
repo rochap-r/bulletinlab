@@ -225,31 +225,22 @@ test('un parent consulte le detail des evaluations de son enfant pour une period
         'lock_version' => 1,
     ]);
 
-    ResultatEvaluation::query()->create([
-        'tenant_id' => $ctx['tenant']->getKey(),
-        'evaluation_id' => $evaluation->getKey(),
-        'inscription_id' => $inscription->getKey(),
-        'eleve_id' => $eleve->getKey(),
-        'statut_resultat' => NoteResultStatus::Saisie->value,
-        'valeur' => 8.00,
-        'commentaire_parent' => 'Bien joué',
-        'commentaire_interne' => 'Ne doit jamais être visible par le parent.',
-        'saisi_par' => $ctx['enseignant']->getKey(),
-        'date_saisie' => now(),
-        'lock_version' => 1,
-    ]);
-    Note::query()->forceCreate([
-        'tenant_id' => $ctx['tenant']->getKey(),
-        'bulletin_id' => $bulletin->getKey(),
-        'node_id' => $ctx['node']->getKey(),
-        'periode_id' => $ctx['periode']->getKey(),
-        'statut_resultat' => NoteResultStatus::Saisie,
-        'valeur' => 32.00,
-        'origine' => NoteOrigine::Evaluations,
-        'calcul_version' => '1.0.0',
-        'calcul_hash' => str_repeat('a', 64),
-        'calculee_at' => now(),
-    ]);
+    $teacherToken = $ctx['enseignant']->createToken(
+        'responsable-evaluation-test',
+        ['tenant:'.$ctx['tenant']->getKey()],
+    )->plainTextToken;
+
+    $this->withToken($teacherToken)
+        ->postJson('/api/v1/evaluations/'.$evaluation->getKey().'/resultats', [
+            'resultats' => [[
+                'inscription_id' => $inscription->getKey(),
+                'statut_resultat' => NoteResultStatus::Saisie->value,
+                'valeur' => 8.00,
+                'commentaire_parent' => 'Bien joué',
+                'commentaire_interne' => 'Ne doit jamais être visible par le parent.',
+            ]],
+        ])
+        ->assertOk();
 
     // Connexion parent puis changement obligatoire du mot de passe initial.
     $login = $this->postJson('/api/v1/responsables/auth/login', [
@@ -269,32 +260,33 @@ test('un parent consulte le detail des evaluations de son enfant pour une period
     $this->withToken($token)
         ->getJson('/api/v1/responsables/enfants/'.$lien->public_id.'/evaluations')
         ->assertOk()
-        ->assertJsonPath('enfant.nom', 'Eleve')
-        ->assertJsonPath('classe.nom', '6ème A')
-        ->assertJsonCount(1, 'evaluations')
-        ->assertJsonPath('enfant.public_id', $eleve->public_id)
-        ->assertJsonPath('classe.public_id', $ctx['classe']->public_id)
-        ->assertJsonPath('inscription_public_id', $inscription->public_id)
-        ->assertJsonPath('evaluations.0.evaluation.public_id', $evaluation->public_id)
-        ->assertJsonPath('evaluations.0.evaluation.libelle', 'Interrogation n°1')
-        ->assertJsonPath('evaluations.0.resultat.valeur', '8.00')
-        ->assertJsonPath('evaluations.0.resultat.statut_resultat', 'SAISIE')
-        ->assertJsonPath('evaluations.0.periode_calcul.total_obtenu', 32)
-        ->assertJsonPath('evaluations.0.periode_calcul.total_maxima', 40)
-        ->assertJsonPath('evaluations.0.periode_calcul.pourcentage', 80)
-        ->assertJsonPath('evaluations.0.periode_calcul.total_composantes_obtenu', 8)
-        ->assertJsonPath('evaluations.0.periode_calcul.total_composantes_maxima', 10)
-        ->assertJsonPath('notes_par_periode.0.origine', 'EVALUATIONS')
-        ->assertJsonPath('evaluations.0.periode_calcul.composantes.0.evaluation_public_id', $evaluation->public_id)
-        ->assertJsonMissingPath('enfant.id')
-        ->assertJsonMissingPath('classe.id')
-        ->assertJsonMissingPath('inscription_id')
-        ->assertJsonMissingPath('evaluations.0.evaluation.id')
-        ->assertJsonMissingPath('evaluations.0.resultat.id')
-        ->assertJsonMissingPath('evaluations.0.resultat.eleve_id')
-        ->assertJsonMissingPath('evaluations.0.resultat.inscription_id')
-        ->assertJsonMissingPath('evaluations.0.resultat.commentaire_interne')
-        ->assertJsonMissingPath('evaluations.0.periode_calcul.composantes.0.evaluation_id');
+        ->assertHeader('Cache-Control', 'no-store, private')
+        ->assertJsonPath('data.enfant.nom', 'Eleve')
+        ->assertJsonPath('data.classe.nom', '6ème A')
+        ->assertJsonCount(1, 'data.evaluations')
+        ->assertJsonPath('data.enfant.public_id', $eleve->public_id)
+        ->assertJsonPath('data.classe.public_id', $ctx['classe']->public_id)
+        ->assertJsonPath('data.inscription_public_id', $inscription->public_id)
+        ->assertJsonPath('data.evaluations.0.evaluation.public_id', $evaluation->public_id)
+        ->assertJsonPath('data.evaluations.0.evaluation.libelle', 'Interrogation n°1')
+        ->assertJsonPath('data.evaluations.0.resultat.valeur', '8.00')
+        ->assertJsonPath('data.evaluations.0.resultat.statut_resultat', 'SAISIE')
+        ->assertJsonPath('data.evaluations.0.periode_calcul.total_obtenu', 32)
+        ->assertJsonPath('data.evaluations.0.periode_calcul.total_maxima', 40)
+        ->assertJsonPath('data.evaluations.0.periode_calcul.pourcentage', 80)
+        ->assertJsonPath('data.evaluations.0.periode_calcul.total_composantes_obtenu', 8)
+        ->assertJsonPath('data.evaluations.0.periode_calcul.total_composantes_maxima', 10)
+        ->assertJsonPath('data.notes_par_periode.0.origine', 'EVALUATIONS')
+        ->assertJsonPath('data.evaluations.0.periode_calcul.composantes.0.evaluation_public_id', $evaluation->public_id)
+        ->assertJsonMissingPath('data.enfant.id')
+        ->assertJsonMissingPath('data.classe.id')
+        ->assertJsonMissingPath('data.inscription_id')
+        ->assertJsonMissingPath('data.evaluations.0.evaluation.id')
+        ->assertJsonMissingPath('data.evaluations.0.resultat.id')
+        ->assertJsonMissingPath('data.evaluations.0.resultat.eleve_id')
+        ->assertJsonMissingPath('data.evaluations.0.resultat.inscription_id')
+        ->assertJsonMissingPath('data.evaluations.0.resultat.commentaire_interne')
+        ->assertJsonMissingPath('data.evaluations.0.periode_calcul.composantes.0.evaluation_id');
 });
 
 test('un parent consulte une note de periode saisie en direct par lenseignant', function (): void {
@@ -369,17 +361,17 @@ test('un parent consulte une note de periode saisie en direct par lenseignant', 
     $this->withToken($token)
         ->getJson('/api/v1/responsables/enfants/'.$lien->public_id.'/evaluations')
         ->assertOk()
-        ->assertJsonPath('enfant.nom', 'Eleve')
-        ->assertJsonPath('classe.nom', '6ème A')
-        ->assertJsonCount(0, 'evaluations')
-        ->assertJsonCount(1, 'notes_par_periode')
-        ->assertJsonPath('notes_par_periode.0.origine', 'DIRECTE')
-        ->assertJsonPath('notes_par_periode.0.valeur', '19.00')
-        ->assertJsonPath('notes_par_periode.0.maxima', 40)
-        ->assertJsonPath('notes_par_periode.0.pourcentage', 47.5)
-        ->assertJsonCount(0, 'notes_par_periode.0.evaluations')
-        ->assertJsonMissingPath('enfant.id')
-        ->assertJsonMissingPath('classe.id');
+        ->assertJsonPath('data.enfant.nom', 'Eleve')
+        ->assertJsonPath('data.classe.nom', '6ème A')
+        ->assertJsonCount(0, 'data.evaluations')
+        ->assertJsonCount(1, 'data.notes_par_periode')
+        ->assertJsonPath('data.notes_par_periode.0.origine', 'DIRECTE')
+        ->assertJsonPath('data.notes_par_periode.0.valeur', '19.00')
+        ->assertJsonPath('data.notes_par_periode.0.maxima', 40)
+        ->assertJsonPath('data.notes_par_periode.0.pourcentage', 47.5)
+        ->assertJsonCount(0, 'data.notes_par_periode.0.evaluations')
+        ->assertJsonMissingPath('data.enfant.id')
+        ->assertJsonMissingPath('data.classe.id');
 });
 
 test('un autre responsable ne voit pas les evaluations de lenfant dun premier responsable', function (): void {

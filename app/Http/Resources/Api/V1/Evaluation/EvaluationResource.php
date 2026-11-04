@@ -18,8 +18,11 @@ final class EvaluationResource extends JsonResource
 
         return [
             'id' => $this->getKey(),
+            'attribution_cours_id' => $this->attribution_cours_id,
             'libelle' => $this->libelle,
+            'composante_modele' => $this->composante_modele,
             'maxima' => $this->maxima,
+            'maxima_bulletin' => $this->maxima_bulletin,
             'coefficient' => $this->coefficient,
             'date_evaluation' => $this->date_evaluation?->toISOString(),
             'statut' => $this->statut?->value,

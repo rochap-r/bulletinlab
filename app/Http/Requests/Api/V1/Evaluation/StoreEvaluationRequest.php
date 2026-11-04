@@ -38,7 +38,7 @@ final class StoreEvaluationRequest extends FormRequest
             'periode_id' => ['required', 'exists:modele_periodes,id'],
             'node_id' => ['required', 'exists:modele_nodes,id'],
             'type_evaluation_id' => ['required', 'exists:types_evaluations,id'],
-            'attribution_cours_id' => ['sometimes', 'exists:attributions_cours,id'],
+            'attribution_cours_id' => ['required', 'exists:attributions_cours,id'],
             'libelle' => ['required', 'string', 'max:200'],
             'maxima' => ['required', 'numeric', 'min:0', 'decimal:0,2'],
             'coefficient' => ['sometimes', 'numeric', 'min:0', 'decimal:0,2'],

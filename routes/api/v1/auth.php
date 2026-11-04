@@ -4,12 +4,17 @@ use App\Http\Controllers\Api\V1\Auth\LoginController;
 use App\Http\Controllers\Api\V1\Auth\LogoutAllController;
 use App\Http\Controllers\Api\V1\Auth\LogoutController;
 use App\Http\Controllers\Api\V1\Auth\SelectTenantController;
+use App\Http\Controllers\Api\V1\Auth\StorePasswordResetRequestController;
 use App\Http\Controllers\Api\V1\Auth\SwitchTenantController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('auth/login', LoginController::class)
     ->middleware('throttle:auth.login')
     ->name('auth.login');
+
+Route::post('auth/password-reset-requests', StorePasswordResetRequestController::class)
+    ->middleware('throttle:auth.password-reset-request')
+    ->name('auth.password-reset-requests.store');
 
 Route::post('auth/select', SelectTenantController::class)
     ->middleware(['auth.cookie', 'auth:sanctum', 'throttle:api'])

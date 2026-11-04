@@ -35,7 +35,7 @@ final class ImportEnseignantsService
             $values = $row['values'];
 
             try {
-                $normalise = $this->rowData($values, $etablissementId, $ligne, $telephonesVus, $matriculesVus);
+                $normalise = $this->validateRow($values, $etablissementId, $ligne, $telephonesVus, $matriculesVus);
                 $telephonesVus[] = $normalise->telephone;
                 if ($normalise->matricule !== null) {
                     $matriculesVus[] = mb_strtolower($normalise->matricule);
@@ -67,11 +67,52 @@ final class ImportEnseignantsService
     }
 
     /**
-     * @param  array<string, mixed>  $row
-     * @param  array<int, string>  $telephonesVus
-     * @param  array<int, string>  $matriculesVus
+     * Valide chaque ligne sans rien créer en base. Retourne les lignes valides
+     * et les erreurs, pour une prévisualisation avant import réel.
+     *
+     * @return array{lignes: list<array{ligne: int, nom: string, telephone: string, matricule?: string|null}>, erreurs: list<array{ligne: int, messages: list<string>}>}
      */
-    private function rowData(array $row, ?int $etablissementId, int $ligne, array $telephonesVus, array $matriculesVus): CreateDirectUtilisateurData
+    public function preview(array $rows, ?int $etablissementId): array
+    {
+        $lignes = [];
+        $erreurs = [];
+        $telephonesVus = [];
+        $matriculesVus = [];
+
+        foreach ($rows as $row) {
+            $ligne = $row['ligne'];
+            $values = $row['values'];
+
+            try {
+                $normalise = $this->validateRow($values, $etablissementId, $ligne, $telephonesVus, $matriculesVus);
+                $telephonesVus[] = $normalise->telephone;
+                if ($normalise->matricule !== null) {
+                    $matriculesVus[] = mb_strtolower($normalise->matricule);
+                }
+
+                $lignes[] = [
+                    'ligne' => $ligne,
+                    'nom' => trim(implode(' ', array_filter([$normalise->prenom, $normalise->nom, $normalise->postnom]))),
+                    'telephone' => $normalise->telephone,
+                    'matricule' => $normalise->matricule,
+                    'role' => $normalise->role,
+                    'etablissement_id' => $normalise->etablissementId,
+                ];
+            } catch (ValidationException $exception) {
+                $erreurs[] = [
+                    'ligne' => $ligne,
+                    'messages' => collect($exception->errors())->flatten()->values()->all(),
+                ];
+            }
+        }
+
+        return ['lignes' => $lignes, 'erreurs' => $erreurs];
+    }
+
+    /**
+     * Valide et normalise une ligne sans créer l'utilisateur en base.
+     */
+    private function validateRow(array $row, ?int $etablissementId, int $ligne, array $telephonesVus, array $matriculesVus): CreateDirectUtilisateurData
     {
         $telephoneBrut = trim((string) ($row['telephone'] ?? ''));
 
@@ -106,9 +147,6 @@ final class ImportEnseignantsService
 
         $sexe = isset($row['sexe']) && trim((string) $row['sexe']) !== '' ? mb_strtoupper(trim((string) $row['sexe'])) : null;
 
-        // L'import ne crée que des enseignants : la colonne `role` historique
-        // est ignorée et le titulariat est nommé par classe (préfet /
-        // directeur des études) via PUT /classes/{classe}/titulariat.
         $role = 'ENSEIGNANT';
 
         $payload = [

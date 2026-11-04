@@ -65,7 +65,9 @@ final class ResponsableEnfantEvaluationsController extends Controller
             return $this->reponseVide($eleve, $classe, $request);
         }
 
-        return response()->json($this->construireReponse($lien, $eleve, $inscription, $classe));
+        return $this->liveResponse(
+            $this->construireReponse($lien, $eleve, $inscription, $classe),
+        );
     }
 
     /**
@@ -73,7 +75,7 @@ final class ResponsableEnfantEvaluationsController extends Controller
      */
     private function reponseVide(?Eleve $eleve, ?Classe $classe, Request $request): JsonResponse
     {
-        return response()->json([
+        return $this->liveResponse([
             'enfant' => $eleve instanceof Eleve ? [
                 'public_id' => $eleve->public_id,
                 'nom' => $eleve->nom,
@@ -90,6 +92,16 @@ final class ResponsableEnfantEvaluationsController extends Controller
             'calculs_par_periode' => [],
             'notes_par_periode' => [],
         ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    private function liveResponse(array $data): JsonResponse
+    {
+        return response()
+            ->json(['data' => $data])
+            ->header('Cache-Control', 'private, no-store, max-age=0');
     }
 
     /**
@@ -160,6 +172,19 @@ final class ResponsableEnfantEvaluationsController extends Controller
                 fn (Note $note): bool => $note->node_id === $evaluation->node_id
                     && $note->periode_id === $evaluation->periode_id,
             ));
+        $templateGroups = $evaluations
+            ->whereNotNull('composante_modele')
+            ->mapWithKeys(fn (Evaluation $evaluation): array => [
+                $evaluation->node_id.'|'.$evaluation->periode_id => true,
+            ]);
+        $evaluations = $evaluations
+            ->filter(function (Evaluation $evaluation) use ($templateGroups): bool {
+                $key = $evaluation->node_id.'|'.$evaluation->periode_id;
+
+                return ! $templateGroups->has($key)
+                    || $evaluation->composante_modele !== null;
+            })
+            ->values();
 
         $evaluationIds = $evaluations->pluck('id')->all();
 
@@ -193,6 +218,9 @@ final class ResponsableEnfantEvaluationsController extends Controller
                     'libelle' => $evaluation->libelle,
                     'type_evaluation' => $evaluation->typeEvaluation?->code,
                     'maxima' => (float) $evaluation->maxima,
+                    'maxima_bulletin' => $evaluation->maxima_bulletin !== null
+                        ? (float) $evaluation->maxima_bulletin
+                        : null,
                     'coefficient' => (float) $evaluation->coefficient,
                     'statut_resultat' => $enfantResultats->get($evaluation->getKey())?->statut_resultat?->value,
                     'valeur' => $enfantResultats->get($evaluation->getKey())?->valeur !== null
@@ -200,7 +228,13 @@ final class ResponsableEnfantEvaluationsController extends Controller
                         : null,
                 ],
             )->all();
-            $rawAggregate = $this->calculationService->compute($components)->toArray();
+            $usesTemplate = $group->contains(
+                fn (Evaluation $evaluation): bool => $evaluation->composante_modele !== null,
+            );
+            $rawAggregate = $this->calculationService->compute(
+                $components,
+                inclureMaximaNonSaisis: $usesTemplate,
+            )->toArray();
             $calculation = [
                 ...$rawAggregate,
                 'origine' => $note->origine->value,
@@ -238,6 +272,7 @@ final class ResponsableEnfantEvaluationsController extends Controller
                         'public_id' => $evaluation->public_id,
                         'libelle' => $evaluation->libelle,
                         'maxima' => $evaluation->maxima,
+                        'maxima_bulletin' => $evaluation->maxima_bulletin,
                         'coefficient' => $evaluation->coefficient,
                         'date_evaluation' => $evaluation->date_evaluation?->toISOString(),
                         'statut' => $evaluation->statut?->value,

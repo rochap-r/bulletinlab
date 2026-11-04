@@ -38,4 +38,27 @@ final class UtilisateurPolicy
         return $actor->etablissement_id !== null
             && (int) $actor->etablissement_id === (int) $cible->etablissement_id;
     }
+
+    public function resetPassword(Utilisateur $actor, Utilisateur $cible): bool
+    {
+        if (! $actor->actif) {
+            return false;
+        }
+
+        if (! $actor->hasTenantRole(self::MANAGEMENT_ROLES)) {
+            return false;
+        }
+
+        if ((int) $actor->tenant_id !== (int) $cible->tenant_id) {
+            return false;
+        }
+
+        // Un gestionnaire ne peut pas réinitialiser un administrateur d'espace
+        if (! $actor->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT'])
+            && $cible->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT'], $cible->tenant_id)) {
+            return false;
+        }
+
+        return true;
+    }
 }

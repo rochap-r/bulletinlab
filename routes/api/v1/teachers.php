@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\MyCourseAssignmentController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentGradeSheetController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentRankingController;
 use App\Http\Controllers\Api\V1\MyCourseAssignmentSlotController;
+use App\Http\Controllers\Api\V1\Teacher\EvaluationTemplateController;
 use App\Http\Controllers\Api\V1\UpsertMyCourseAssignmentNoteController;
 use Illuminate\Support\Facades\Route;
 
@@ -41,6 +42,10 @@ Route::get(
     'me/attributions/{attribution}/creneaux',
     MyCourseAssignmentSlotController::class,
 )->name('me.attributions.creneaux.index');
+Route::post(
+    'me/attributions/{attribution}/creneaux/{creneau}/modele-evaluations',
+    EvaluationTemplateController::class,
+)->middleware('periode.ouverte')->name('me.attributions.creneaux.modele-evaluations.store');
 Route::get('me/attributions/{attribution}/classements', MyCourseAssignmentRankingController::class)
     ->whereNumber('attribution')
     ->name('me.attributions.classements.show');

@@ -11,6 +11,7 @@ use App\Models\AuditLog;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\Utilisateur;
+use App\Support\PhoneNumberNormalizer;
 use Illuminate\Contracts\Hashing\Hasher;
 use Illuminate\Support\Facades\Log;
 use Laravel\Sanctum\PersonalAccessToken;
@@ -36,11 +37,15 @@ class AuthService implements AuthServiceInterface
                 ->whereIn('statut', ['EN_ATTENTE', 'ESSAI', 'ACTIF'])
                 ->first();
 
+        $identifiantNormalise = blank($data->identifiant)
+            ? null
+            : PhoneNumberNormalizer::normalize($data->identifiant);
+
         $utilisateur = Utilisateur::query()
             ->where('tenant_id', $tenant?->id ?? 0)
-            ->where(function ($query) use ($data): void {
+            ->where(function ($query) use ($data, $identifiantNormalise): void {
                 $query->where('telephone', $data->identifiant)
-                    ->orWhere('telephone_normalise', $data->identifiant);
+                    ->orWhere('telephone_normalise', $identifiantNormalise);
             })
             ->first();
 
@@ -181,10 +186,14 @@ class AuthService implements AuthServiceInterface
      */
     public function loginGlobal(string $identifiant, string $password): GlobalLoginResult
     {
-        $rows = blank($identifiant)
+        $identifiantNormalise = blank($identifiant)
+            ? null
+            : PhoneNumberNormalizer::normalize($identifiant);
+
+        $rows = blank($identifiantNormalise)
             ? collect()
             : Utilisateur::withoutGlobalScopes()
-                ->where('telephone_normalise', $identifiant)
+                ->where('telephone_normalise', $identifiantNormalise)
                 ->where('actif', true)
                 ->whereHas('tenant', fn ($query) => $query->whereIn('statut', ['EN_ATTENTE', 'ESSAI', 'ACTIF']))
                 ->with(['roles.permissions', 'tenant'])

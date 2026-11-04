@@ -15,6 +15,7 @@ final class MyCourseAssignmentSlotResource extends JsonResource
     public function toArray(Request $request): array
     {
         $isLocked = (bool) $this->verrouille;
+        $isEvaluationManaged = (bool) $this->pilotee_par_evaluations;
 
         return [
             'id' => $this->id,
@@ -32,8 +33,12 @@ final class MyCourseAssignmentSlotResource extends JsonResource
             'maximum' => $this->maxima,
             'coefficient' => $this->coefficient,
             'verrouille' => $isLocked,
+            'mode_saisie' => $isEvaluationManaged
+                ? 'EVALUATIONS'
+                : 'DIRECTE',
             'saisie_autorisee' => (bool) $this->periode->saisissable
                 && ! $isLocked
+                && ! $isEvaluationManaged
                 && (bool) ($this->periode_ouverte ?? true),
         ];
     }

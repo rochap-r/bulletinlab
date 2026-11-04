@@ -7,13 +7,25 @@ use App\Http\Controllers\Api\V1\EtablissementController;
 use App\Http\Controllers\Api\V1\Membership\EnseignantsTemplateController;
 use App\Http\Controllers\Api\V1\Membership\ImportEnseignantsController;
 use App\Http\Controllers\Api\V1\Membership\ImportEnseignantsExcelController;
+use App\Http\Controllers\Api\V1\Membership\ImportEnseignantsExcelPreviewController;
+use App\Http\Controllers\Api\V1\Membership\ImportEnseignantsPreviewController;
+use App\Http\Controllers\Api\V1\Membership\ListPasswordResetRequestsController;
 use App\Http\Controllers\Api\V1\Membership\RattacherUtilisateurController;
 use App\Http\Controllers\Api\V1\Membership\RechercherUtilisateurController;
+use App\Http\Controllers\Api\V1\Membership\ResetRequestedPasswordController;
+use App\Http\Controllers\Api\V1\Membership\ResetUtilisateurPasswordController;
 use App\Http\Controllers\Api\V1\Membership\StoreDirectUtilisateurController;
 use App\Http\Controllers\Api\V1\Membership\UpdateUtilisateurController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('me', MeController::class)->name('me.show');
+
+Route::get('password-reset-requests', ListPasswordResetRequestsController::class)
+    ->middleware(['tenant.validated', 'require.password.change'])
+    ->name('password-reset-requests.index');
+Route::post('password-reset-requests/{demande}/reset', ResetRequestedPasswordController::class)
+    ->middleware(['tenant.validated', 'require.password.change'])
+    ->name('password-reset-requests.reset');
 
 Route::post('me/password', UpdatePasswordController::class)
     ->middleware('throttle:me.password')
@@ -38,9 +50,17 @@ Route::post('utilisateurs/import-enseignants', ImportEnseignantsController::clas
     ->middleware(['tenant.validated', 'require.password.change'])
     ->name('utilisateurs.import-enseignants');
 
+Route::post('utilisateurs/import-enseignants/aperçu', ImportEnseignantsPreviewController::class)
+    ->middleware(['tenant.validated', 'require.password.change'])
+    ->name('utilisateurs.import-enseignants.preview');
+
 Route::post('utilisateurs/import-enseignants-excel', ImportEnseignantsExcelController::class)
     ->middleware(['tenant.validated', 'require.password.change'])
     ->name('utilisateurs.import-enseignants-excel');
+
+Route::post('utilisateurs/import-enseignants-excel/aperçu', ImportEnseignantsExcelPreviewController::class)
+    ->middleware(['tenant.validated', 'require.password.change'])
+    ->name('utilisateurs.import-enseignants-excel.preview');
 
 Route::get('utilisateurs/import-enseignants/modele', EnseignantsTemplateController::class)
     ->middleware(['tenant.validated', 'require.password.change'])
@@ -49,6 +69,10 @@ Route::get('utilisateurs/import-enseignants/modele', EnseignantsTemplateControll
 Route::match(['put', 'patch'], 'utilisateurs/{utilisateur}', UpdateUtilisateurController::class)
     ->middleware(['tenant.validated', 'require.password.change'])
     ->name('utilisateurs.update');
+
+Route::post('utilisateurs/{utilisateur}/reset-password', ResetUtilisateurPasswordController::class)
+    ->middleware(['tenant.validated', 'require.password.change'])
+    ->name('utilisateurs.reset-password');
 
 Route::get('utilisateurs/rechercher', RechercherUtilisateurController::class)
     ->middleware(['tenant.validated', 'require.password.change'])

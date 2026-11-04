@@ -773,6 +773,7 @@ test('the interim OpenAPI contract describes the current assignment entry slots'
             'maximum',
             'coefficient',
             'verrouille',
+            'mode_saisie',
             'saisie_autorisee',
         ])
         ->and(
@@ -781,6 +782,7 @@ test('the interim OpenAPI contract describes the current assignment entry slots'
         ->and($example['data'][0]['id'])->toBe(91)
         ->and($example['data'][0]['attribution_id'])->toBe(51)
         ->and($example['data'][0]['maximum'])->toBe('20.00')
+        ->and($example['data'][0]['mode_saisie'])->toBe('DIRECTE')
         ->and($example['data'][0]['saisie_autorisee'])->toBeTrue()
         ->and($example['meta']['total'])->toBe(1);
 });

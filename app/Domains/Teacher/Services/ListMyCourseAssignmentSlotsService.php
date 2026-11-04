@@ -3,9 +3,11 @@
 namespace App\Domains\Teacher\Services;
 
 use App\Domains\Teacher\Exceptions\TeacherAssignmentSlotListingConflictException;
+use App\Enums\StatutEvaluation;
 use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
 use App\Models\CalendrierPeriode;
+use App\Models\Evaluation;
 use App\Models\ModeleBulletin;
 use App\Models\ModeleMaximum;
 use App\Models\VerrouillagePeriode;
@@ -102,6 +104,20 @@ final class ListMyCourseAssignmentSlotsService
             )
             ->where('verrouillages_periodes.verrouille', true)
             ->limit(1);
+        $evaluationManaged = Evaluation::query()
+            ->selectRaw('1')
+            ->where('evaluations.tenant_id', $assignment->tenant_id)
+            ->where('evaluations.classe_id', $assignment->classe_id)
+            ->whereColumn('evaluations.node_id', 'modele_maxima.node_id')
+            ->whereColumn(
+                'evaluations.periode_id',
+                'modele_maxima.periode_id',
+            )
+            ->whereIn('evaluations.statut', [
+                StatutEvaluation::Publiee->value,
+                StatutEvaluation::Verrouillee->value,
+            ])
+            ->limit(1);
 
         $query = ModeleMaximum::query()
             ->select([
@@ -113,7 +129,10 @@ final class ListMyCourseAssignmentSlotsService
                 'modele_maxima.maxima',
                 'modele_maxima.coefficient',
             ])
-            ->addSelect(['verrouille' => $lockedPeriod])
+            ->addSelect([
+                'verrouille' => $lockedPeriod,
+                'pilotee_par_evaluations' => $evaluationManaged,
+            ])
             ->join('modele_periodes', function (JoinClause $join): void {
                 $join
                     ->on(

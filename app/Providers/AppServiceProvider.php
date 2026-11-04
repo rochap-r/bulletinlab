@@ -96,7 +96,7 @@ class AppServiceProvider extends ServiceProvider
     {
         Model::shouldBeStrict(! $this->app->isProduction());
 
-        Password::defaults(fn (): Password => Password::min(12)
+        Password::defaults(fn (): Password => Password::min(6)
             ->letters()
             ->mixedCase()
             ->numbers());
@@ -122,6 +122,20 @@ class AppServiceProvider extends ServiceProvider
             return [
                 Limit::perMinute(30)->by('ip:'.hash('sha256', (string) $request->ip())),
                 Limit::perMinute(5)->by('credential:'.hash('sha256', $credentialKey)),
+            ];
+        });
+
+        RateLimiter::for('auth.password-reset-request', function (Request $request): array {
+            $telephone = trim((string) $request->input('telephone'));
+
+            try {
+                $telephone = PhoneNumberNormalizer::normalize($telephone);
+            } catch (\InvalidArgumentException) {
+            }
+
+            return [
+                Limit::perMinute(10)->by('ip:'.hash('sha256', (string) $request->ip())),
+                Limit::perHour(3)->by('password-reset:'.hash('sha256', Str::lower($telephone))),
             ];
         });
 

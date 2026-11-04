@@ -20,6 +20,7 @@ use App\Models\Note;
 use App\Models\RefCycle;
 use App\Models\RefNiveau;
 use App\Models\ResultatEvaluation;
+use App\Models\Role;
 use App\Models\SystemLayoutBulletin;
 use App\Models\SystemTemplateBulletin;
 use App\Models\Tenant;
@@ -247,11 +248,158 @@ test('un enseignant peut creer une evaluation pour une matiere de sa classe', fu
         ->and($audit->nouvelles_valeurs['statut'])->toBe('PUBLIEE');
 });
 
+test('le canevas automatique repartit le maximum officiel en un quart un quart et une moitie', function (): void {
+    $ctx = evaluationContext();
+    $ctx['maximum']->update(['maxima' => 20]);
+    $teacherRole = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['nom' => 'Enseignant', 'system_role' => true],
+    );
+    $ctx['teacher']->roles()->attach($teacherRole->getKey());
+    $token = teacherToken($ctx['teacher'], $ctx['tenant']);
+    $endpoint = '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+        .'/creneaux/'.$ctx['maximum']->getKey().'/modele-evaluations';
+
+    $response = $this->withToken($token)->postJson($endpoint);
+
+    $response->assertOk();
+    expect($response->json('data'))->toHaveCount(3)
+        ->and($response->json('data.0.composante_modele'))->toBe('EXERCICE_DEVOIR')
+        ->and($response->json('data.0.maxima'))->toBe('5.00')
+        ->and($response->json('data.1.composante_modele'))->toBe('CAHIER')
+        ->and($response->json('data.1.maxima'))->toBe('5.00')
+        ->and($response->json('data.2.composante_modele'))->toBe('INTERROGATION')
+        ->and($response->json('data.2.maxima'))->toBe('10.00');
+
+    $this->withToken($token)->postJson($endpoint)->assertOk();
+
+    expect(Evaluation::query()->whereNotNull('composante_modele')->count())->toBe(3)
+        ->and(AuditLog::query()->where('action', 'MODELE_EVALUATION_ACTIVE')->count())->toBe(3);
+
+    $this->withToken($token)
+        ->getJson('/api/v1/me/attributions/'.$ctx['attribution']->getKey().'/creneaux?per_page=100')
+        ->assertOk()
+        ->assertJsonPath('data.0.mode_saisie', 'EVALUATIONS')
+        ->assertJsonPath('data.0.saisie_autorisee', false);
+});
+
+test('le canevas automatique choisit des baremes de correction lisibles et conserve les poids du bulletin', function (
+    int $officialMaximum,
+    array $correctionMaxima,
+    array $bulletinMaxima,
+): void {
+    $ctx = evaluationContext();
+    $ctx['maximum']->update(['maxima' => $officialMaximum]);
+    $teacherRole = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['nom' => 'Enseignant', 'system_role' => true],
+    );
+    $ctx['teacher']->roles()->attach($teacherRole->getKey());
+    $token = teacherToken($ctx['teacher'], $ctx['tenant']);
+    $response = $this->withToken($token)->postJson(
+        '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+            .'/creneaux/'.$ctx['maximum']->getKey().'/modele-evaluations',
+    )->assertOk();
+
+    expect(collect($response->json('data'))->pluck('maxima')->map(fn (string $value): float => (float) $value)->all())
+        ->toBe($correctionMaxima)
+        ->and(collect($response->json('data'))->pluck('maxima_bulletin')->map(fn (string $value): float => (float) $value)->all())
+        ->toBe($bulletinMaxima);
+})->with([
+    'cours sur 5' => [5, [5.0, 5.0, 10.0], [1.25, 1.25, 2.5]],
+    'cours sur 30' => [30, [10.0, 10.0, 20.0], [7.5, 7.5, 15.0]],
+    'cours sur 50' => [50, [20.0, 20.0, 40.0], [12.5, 12.5, 25.0]],
+]);
+
+test('le canevas automatique conserve les points reels lors de la saisie progressive', function (): void {
+    $ctx = evaluationContext();
+    $teacherRole = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['nom' => 'Enseignant', 'system_role' => true],
+    );
+    $ctx['teacher']->roles()->attach($teacherRole->getKey());
+    $token = teacherToken($ctx['teacher'], $ctx['tenant']);
+    $endpoint = '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+        .'/creneaux/'.$ctx['maximum']->getKey().'/modele-evaluations';
+    $evaluations = collect(
+        $this->withToken($token)->postJson($endpoint)->assertOk()->json('data'),
+    )->keyBy('composante_modele');
+
+    foreach ([
+        'EXERCICE_DEVOIR' => 6,
+        'CAHIER' => 7,
+        'INTERROGATION' => 15,
+    ] as $component => $value) {
+        $this->withToken($token)
+            ->postJson('/api/v1/evaluations/'.$evaluations->get($component)['id'].'/resultats', [
+                'resultats' => [[
+                    'inscription_id' => $ctx['inscription']->getKey(),
+                    'statut_resultat' => NoteResultStatus::Saisie->value,
+                    'valeur' => $value,
+                ]],
+            ])
+            ->assertOk();
+
+        if ($component === 'EXERCICE_DEVOIR') {
+            expect((float) Note::query()->sole()->valeur)->toBe(6.0);
+        }
+    }
+
+    $note = Note::query()->sole();
+
+    expect((float) $note->valeur)->toBe(28.0)
+        ->and($note->origine)->toBe(NoteOrigine::Evaluations);
+
+    $this->withToken($token)
+        ->getJson(
+            '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+                .'/creneaux/'.$ctx['maximum']->getKey().'/feuille-notes',
+        )
+        ->assertOk()
+        ->assertJsonPath('data.0.note.valeur', '28.00')
+        ->assertJsonPath('data.0.note.origine', NoteOrigine::Evaluations->value);
+});
+
+test('les notes sur baremes lisibles sont converties vers le maximum officiel', function (): void {
+    $ctx = evaluationContext();
+    $ctx['maximum']->update(['maxima' => 30]);
+    $teacherRole = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['nom' => 'Enseignant', 'system_role' => true],
+    );
+    $ctx['teacher']->roles()->attach($teacherRole->getKey());
+    $token = teacherToken($ctx['teacher'], $ctx['tenant']);
+    $evaluations = collect(
+        $this->withToken($token)->postJson(
+            '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+                .'/creneaux/'.$ctx['maximum']->getKey().'/modele-evaluations',
+        )->assertOk()->json('data'),
+    )->keyBy('composante_modele');
+
+    foreach ([
+        'EXERCICE_DEVOIR' => 8,
+        'CAHIER' => 6,
+        'INTERROGATION' => 14,
+    ] as $component => $value) {
+        $this->withToken($token)
+            ->postJson('/api/v1/evaluations/'.$evaluations->get($component)['id'].'/resultats', [
+                'resultats' => [[
+                    'inscription_id' => $ctx['inscription']->getKey(),
+                    'statut_resultat' => NoteResultStatus::Saisie->value,
+                    'valeur' => $value,
+                ]],
+            ])
+            ->assertOk();
+    }
+
+    expect((float) Note::query()->sole()->valeur)->toBe(21.0);
+});
+
 test('un enseignant liste les evaluations de sa classe', function (): void {
     $ctx = evaluationContext();
     $token = teacherToken($ctx['teacher'], $ctx['tenant']);
 
-    Evaluation::query()->create([
+    $evaluation = Evaluation::query()->create([
         'tenant_id' => $ctx['tenant']->getKey(),
         'etablissement_id' => $ctx['school']->getKey(),
         'annee_scolaire_id' => $ctx['classe']->annee_scolaire_id,
@@ -269,16 +417,31 @@ test('un enseignant liste les evaluations de sa classe', function (): void {
         'lock_version' => 1,
     ]);
 
+    ResultatEvaluation::query()->create([
+        'tenant_id' => $ctx['tenant']->getKey(),
+        'evaluation_id' => $evaluation->getKey(),
+        'inscription_id' => $ctx['inscription']->getKey(),
+        'eleve_id' => $ctx['eleve']->getKey(),
+        'statut_resultat' => NoteResultStatus::Saisie->value,
+        'valeur' => 8,
+        'saisi_par' => $ctx['teacher']->getKey(),
+        'date_saisie' => now(),
+    ]);
+
     $response = $this->withHeader('Authorization', 'Bearer '.$token)
-        ->getJson('/api/v1/evaluations', [
-            'classe_id' => $ctx['classe']->getKey(),
-            'periode_id' => $ctx['periode']->getKey(),
-        ]);
+        ->getJson(
+            '/api/v1/evaluations?classe_id='.$ctx['classe']->getKey()
+                .'&periode_id='.$ctx['periode']->getKey()
+                .'&per_page=100&page=1',
+        );
 
     $response->assertStatus(200);
     $data = $response->json();
     expect($data['data'])->toHaveCount(1)
-        ->and($data['data'][0]['libelle'])->toBe('Interrogation n°1');
+        ->and($data['data'][0]['libelle'])->toBe('Interrogation n°1')
+        ->and($data['data'][0]['resultats'][0]['valeur'])->toBe('8.00')
+        ->and($data['data'][0]['resultats'][0]['eleve']['nom'])->toBe('Eleve')
+        ->and($data['meta']['per_page'])->toBe(100);
 });
 
 test('le filtre par classe exclut les evaluations des autres classes', function (): void {
@@ -459,6 +622,85 @@ test('les evaluations sont extrapolees et projetees dans la note officielle de p
         ->and($note->calcul_hash)->toHaveLength(64)
         ->and($note->calculee_at)->not->toBeNull()
         ->and($note->lock_version)->toBe(3);
+});
+
+test('une periode publiee bascule vers les evaluations sans permettre un retour a la saisie directe', function (): void {
+    $ctx = evaluationContext();
+    $teacherRole = Role::query()->firstOrCreate(
+        ['tenant_id' => null, 'code' => 'ENSEIGNANT'],
+        ['nom' => 'Enseignant', 'system_role' => true],
+    );
+    $ctx['teacher']->roles()->attach($teacherRole->getKey());
+    $token = teacherToken($ctx['teacher'], $ctx['tenant']);
+    $directNote = Note::query()->create([
+        'tenant_id' => $ctx['tenant']->getKey(),
+        'bulletin_id' => $ctx['bulletin']->getKey(),
+        'node_id' => $ctx['node']->getKey(),
+        'periode_id' => $ctx['periode']->getKey(),
+        'statut_resultat' => NoteResultStatus::Saisie,
+        'valeur' => 18.00,
+        'saisie_par' => $ctx['teacher']->getKey(),
+        'date_saisie' => now(),
+        'origine' => NoteOrigine::Directe,
+    ]);
+    $evaluation = Evaluation::query()->create([
+        'tenant_id' => $ctx['tenant']->getKey(),
+        'etablissement_id' => $ctx['school']->getKey(),
+        'annee_scolaire_id' => $ctx['classe']->annee_scolaire_id,
+        'classe_id' => $ctx['classe']->getKey(),
+        'node_id' => $ctx['node']->getKey(),
+        'periode_id' => $ctx['periode']->getKey(),
+        'type_evaluation_id' => $ctx['typeEvaluation']->getKey(),
+        'libelle' => 'Interrogation de transition',
+        'maxima' => 10.00,
+        'coefficient' => 1.00,
+        'date_evaluation' => '2026-10-15',
+        'statut' => StatutEvaluation::Publiee,
+        'attribution_cours_id' => $ctx['attribution']->getKey(),
+        'cree_par' => $ctx['teacher']->getKey(),
+    ]);
+
+    $this->withToken($token)
+        ->getJson('/api/v1/me/attributions/'.$ctx['attribution']->getKey().'/creneaux?per_page=100')
+        ->assertOk()
+        ->assertJsonPath('data.0.mode_saisie', 'EVALUATIONS')
+        ->assertJsonPath('data.0.saisie_autorisee', false);
+
+    $this->withToken($token)
+        ->putJson(
+            '/api/v1/me/attributions/'.$ctx['attribution']->getKey()
+                .'/creneaux/'.$ctx['maximum']->getKey()
+                .'/inscriptions/'.$ctx['inscription']->getKey().'/note',
+            [
+                'statut_resultat' => NoteResultStatus::Saisie->value,
+                'valeur' => 20,
+                'lock_version' => $directNote->lock_version,
+                'motif_correction' => 'Tentative de correction directe',
+            ],
+        )
+        ->assertConflict()
+        ->assertJsonPath(
+            'detail',
+            'Cette période est pilotée par les évaluations. Saisissez les résultats depuis l’espace Évaluations.',
+        );
+
+    $this->withToken($token)
+        ->postJson('/api/v1/evaluations/'.$evaluation->getKey().'/resultats', [
+            'resultats' => [[
+                'inscription_id' => $ctx['inscription']->getKey(),
+                'statut_resultat' => NoteResultStatus::Saisie->value,
+                'valeur' => 8.00,
+            ]],
+        ])
+        ->assertOk();
+
+    $projectedNote = $directNote->refresh();
+
+    expect((float) $projectedNote->valeur)->toBe(32.0)
+        ->and($projectedNote->origine)->toBe(NoteOrigine::Evaluations)
+        ->and($projectedNote->lock_version)->toBe(2)
+        ->and($projectedNote->historique()->count())->toBe(1)
+        ->and((float) $projectedNote->historique()->sole()->ancienne_valeur)->toBe(18.0);
 });
 
 test('un enseignant liste les types d evaluations actifs', function (): void {

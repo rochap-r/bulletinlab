@@ -270,6 +270,44 @@ final readonly class DirectUtilisateurService
         }, attempts: 3);
     }
 
+    public function resetPassword(Utilisateur $utilisateur, Utilisateur $actor): Utilisateur
+    {
+        return DB::transaction(function () use ($utilisateur, $actor): Utilisateur {
+            $tenantId = $this->tenantContext->id();
+
+            if ((int) $utilisateur->tenant_id !== $tenantId) {
+                throw ValidationException::withMessages([
+                    'utilisateur' => ['Ce compte n’appartient pas à votre espace.'],
+                ]);
+            }
+
+            if ($this->isTenantAdministrateurCible($utilisateur)) {
+                throw ValidationException::withMessages([
+                    'utilisateur' => ['Impossible de réinitialiser le mot de passe d’un administrateur d’espace.'],
+                ]);
+            }
+
+            $utilisateur->forceFill([
+                'mot_de_passe' => $this->hasher->make(config('responsables.default_password', '123456')),
+                'doit_changer_mot_de_passe' => true,
+            ])->save();
+
+            $utilisateur->load(['roles', 'tenant']);
+
+            AuditLog::query()->create([
+                'tenant_id' => $tenantId,
+                'utilisateur_id' => $actor->getKey(),
+                'action' => 'MDP_REINITIALISE_PAR_ADMIN',
+                'table_cible' => $utilisateur->getTable(),
+                'ligne_cible_id' => $utilisateur->getKey(),
+                'ip_address' => request()->ip(),
+                'user_agent' => request()->userAgent(),
+            ]);
+
+            return $utilisateur;
+        }, attempts: 3);
+    }
+
     public function update(Utilisateur $cible, array $data, Utilisateur $actor): Utilisateur
     {
         return DB::transaction(function () use ($cible, $data, $actor): Utilisateur {
@@ -383,13 +421,18 @@ final readonly class DirectUtilisateurService
             : self::MANAGER_ASSIGNABLE_ROLES;
     }
 
-    private static function generateTemporaryPassword(): string
-    {
-        return Str::password(length: 16, spaces: false);
-    }
-
     private function isTenantAdministrator(Utilisateur $actor): bool
     {
         return $actor->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT']);
+    }
+
+    private function isTenantAdministrateurCible(Utilisateur $utilisateur): bool
+    {
+        return $utilisateur->hasTenantRole(['ADMIN_ECOLE', 'ADMIN_TENANT'], $utilisateur->tenant_id);
+    }
+
+    private static function generateTemporaryPassword(): string
+    {
+        return Str::password(length: 16, spaces: false);
     }
 }

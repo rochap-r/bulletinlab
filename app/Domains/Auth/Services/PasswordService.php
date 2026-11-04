@@ -60,25 +60,31 @@ final readonly class PasswordService
             $siblings = Utilisateur::withoutGlobalScopes()
                 ->where('telephone_normalise', $user->telephone_normalise)
                 ->lockForUpdate()
-                ->get(['id', 'tenant_id']);
+                ->get();
+
+            $comptesModifies = $clearSiblings
+                ? $siblings
+                : $siblings->filter(fn (Utilisateur $sibling): bool => $sibling->getKey() === $user->getKey()
+                    || (! $user->hasRoleInOwnTenant(['ADMIN_ECOLE', 'ADMIN_TENANT'])
+                        && $sibling->doit_changer_mot_de_passe
+                        && $sibling->mot_de_passe === $user->mot_de_passe
+                        && ! $sibling->hasRoleInOwnTenant(['ADMIN_ECOLE', 'ADMIN_TENANT'])));
 
             $query = Utilisateur::withoutGlobalScopes()
                 ->where('telephone_normalise', $user->telephone_normalise);
 
-            if ($clearSiblings) {
-                $query->update(['mot_de_passe' => $hash, 'doit_changer_mot_de_passe' => false]);
-            } else {
-                $user->forceFill([
-                    'mot_de_passe' => $hash,
-                    'doit_changer_mot_de_passe' => false,
-                ])->save();
-            }
+            $query->whereIn('id', $comptesModifies->modelKeys())
+                ->update(['mot_de_passe' => $hash, 'doit_changer_mot_de_passe' => false]);
 
-            $user->forceFill(['derniere_connexion_at' => now()])->save();
+            $user->forceFill([
+                'mot_de_passe' => $hash,
+                'doit_changer_mot_de_passe' => false,
+                'derniere_connexion_at' => now(),
+            ])->save();
 
             PersonalAccessToken::query()
                 ->where('tokenable_type', (new Utilisateur)->getMorphClass())
-                ->whereIn('tokenable_id', $siblings->pluck('id'))
+                ->whereIn('tokenable_id', $comptesModifies->modelKeys())
                 ->where('id', '!=', $user->currentAccessToken()?->getKey() ?? 0)
                 ->delete();
 
@@ -90,7 +96,7 @@ final readonly class PasswordService
                 'ligne_cible_id' => $user->getKey(),
             ]);
 
-            foreach ($siblings as $sibling) {
+            foreach ($comptesModifies as $sibling) {
                 if ($sibling->id === $user->id) {
                     continue;
                 }
@@ -107,7 +113,7 @@ final readonly class PasswordService
             Log::channel('security')->info('auth.password.changed', [
                 'tenant_id' => $user->tenant_id,
                 'user_id' => $user->getKey(),
-                'spaces' => $siblings->count(),
+                'spaces' => $comptesModifies->count(),
             ]);
         }, attempts: 3);
     }

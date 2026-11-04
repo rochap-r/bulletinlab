@@ -49,6 +49,7 @@ final class ProjectEvaluationNotesService
                 'modeleBulletin',
                 fn ($query) => $query->where('classe_id', $sourceEvaluation->classe_id),
             )
+            ->lockForUpdate()
             ->first();
 
         if (! $slot instanceof ModeleMaximum) {
@@ -73,7 +74,7 @@ final class ProjectEvaluationNotesService
             );
         }
 
-        $evaluations = Evaluation::query()
+        $evaluationQuery = Evaluation::query()
             ->where('tenant_id', $sourceEvaluation->tenant_id)
             ->where('classe_id', $sourceEvaluation->classe_id)
             ->where('node_id', $sourceEvaluation->node_id)
@@ -81,7 +82,15 @@ final class ProjectEvaluationNotesService
             ->whereIn('statut', [
                 StatutEvaluation::Publiee->value,
                 StatutEvaluation::Verrouillee->value,
-            ])
+            ]);
+        $usesTemplate = (clone $evaluationQuery)
+            ->whereNotNull('composante_modele')
+            ->exists();
+        $evaluations = $evaluationQuery
+            ->when(
+                $usesTemplate,
+                fn ($query) => $query->whereNotNull('composante_modele'),
+            )
             ->with('typeEvaluation:id,code')
             ->orderBy('id')
             ->get();
@@ -107,6 +116,9 @@ final class ProjectEvaluationNotesService
                     'libelle' => $evaluation->libelle,
                     'type_evaluation' => $evaluation->typeEvaluation?->code,
                     'maxima' => (float) $evaluation->maxima,
+                    'maxima_bulletin' => $evaluation->maxima_bulletin !== null
+                        ? (float) $evaluation->maxima_bulletin
+                        : null,
                     'coefficient' => (float) $evaluation->coefficient,
                     'statut_resultat' => $result?->statut_resultat?->value,
                     'valeur' => $result?->valeur !== null
@@ -115,12 +127,17 @@ final class ProjectEvaluationNotesService
                 ];
             })->all();
 
-            $aggregate = $this->calculationService->compute($components);
-            $officialMaximum = (float) $slot->maxima;
-            $officialValue = $this->calculationService->extrapolate(
-                $aggregate,
-                $officialMaximum,
+            $aggregate = $this->calculationService->compute(
+                $components,
+                inclureMaximaNonSaisis: $usesTemplate,
             );
+            $officialMaximum = (float) $slot->maxima;
+            $officialValue = $aggregate->nombreComposantes > 0
+                ? $this->calculationService->extrapolate(
+                    $aggregate,
+                    $officialMaximum,
+                )
+                : null;
             $status = $officialValue !== null
                 ? NoteResultStatus::Saisie
                 : $this->emptyStatus($results);
@@ -140,6 +157,7 @@ final class ProjectEvaluationNotesService
                 ->first();
             $previousStatus = $note?->statut_resultat;
             $previousValue = $note?->valeur;
+            $previousOrigin = $note?->origine;
 
             if (! $note instanceof Note) {
                 $note = new Note;
@@ -163,7 +181,9 @@ final class ProjectEvaluationNotesService
             ])->save();
 
             if ($previousStatus instanceof NoteResultStatus
-                && ($previousStatus !== $status || $previousValue !== $note->valeur)) {
+                && ($previousOrigin !== NoteOrigine::Evaluations
+                    || $previousStatus !== $status
+                    || $previousValue !== $note->valeur)) {
                 $note->historique()->create([
                     'ancien_statut_resultat' => $previousStatus,
                     'nouveau_statut_resultat' => $status,

@@ -9,7 +9,9 @@ use App\Http\Requests\Api\V1\Evaluation\EvaluationIndexRequest;
 use App\Http\Requests\Api\V1\Evaluation\StoreEvaluationRequest;
 use App\Http\Resources\Api\V1\Evaluation\EvaluationResource;
 use App\Models\Evaluation;
+use App\Models\Utilisateur;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 
 final class EvaluationController extends Controller
 {
@@ -19,7 +21,10 @@ final class EvaluationController extends Controller
 
     public function index(EvaluationIndexRequest $request): JsonResponse
     {
-        $evaluations = $this->evaluationService->index($request->validated());
+        $evaluations = $this->evaluationService->index(
+            $request->validated(),
+            $request->teacher(),
+        );
 
         return EvaluationResource::collection($evaluations)->response();
     }
@@ -36,14 +41,23 @@ final class EvaluationController extends Controller
         return EvaluationResource::make($evaluation->load(['typeEvaluation', 'periode', 'node', 'classe']))->response();
     }
 
-    public function show(EstablishmentContext $context, Evaluation $evaluation): JsonResponse
-    {
-        if ((int) $evaluation->etablissement_id !== $context->id()) {
+    public function show(
+        Request $request,
+        EstablishmentContext $context,
+        Evaluation $evaluation,
+    ): JsonResponse {
+        $teacher = $request->user();
+
+        if (! $teacher instanceof Utilisateur
+            || (int) $evaluation->etablissement_id !== $context->id()
+            || ! $evaluation->attributionCours()
+                ->where('enseignant_id', $teacher->getKey())
+                ->exists()) {
             abort(404);
         }
 
         return EvaluationResource::make(
-            $evaluation->load(['typeEvaluation', 'periode', 'node', 'classe', 'resultats']),
+            $evaluation->load(['typeEvaluation', 'periode', 'node', 'classe', 'resultats.eleve']),
         )->response();
     }
 }

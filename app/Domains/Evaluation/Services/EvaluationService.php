@@ -6,6 +6,7 @@ use App\Domains\Evaluation\Enums\NoteResultStatus;
 use App\Domains\Evaluation\Exceptions\EvaluationException;
 use App\Domains\Evaluation\Exceptions\PeriodLockedException;
 use App\Domains\SchoolYear\Services\PeriodeLockService;
+use App\Domains\Teacher\Exceptions\TeacherNoteEntryConflictException;
 use App\Domains\Tenant\Contexts\EstablishmentContext;
 use App\Enums\StatutEvaluation;
 use App\Models\AttributionCours;
@@ -13,6 +14,7 @@ use App\Models\AuditLog;
 use App\Models\Classe;
 use App\Models\Evaluation;
 use App\Models\Inscription;
+use App\Models\ModeleMaximum;
 use App\Models\ModeleNode;
 use App\Models\ModelePeriode;
 use App\Models\ResultatEvaluation;
@@ -36,13 +38,20 @@ final class EvaluationService
      * @param  array<string, mixed>  $filters
      * @return LengthAwarePaginator<Evaluation>
      */
-    public function index(array $filters): LengthAwarePaginator
+    public function index(array $filters, Utilisateur $teacher): LengthAwarePaginator
     {
         $tenantId = (int) $this->establishmentContext->current()->tenant_id;
 
         $query = Evaluation::query()
             ->where('tenant_id', $tenantId)
-            ->with(['typeEvaluation', 'periode', 'node', 'classe', 'resultats']);
+            ->whereHas(
+                'attributionCours',
+                fn (Builder $query): Builder => $query->where(
+                    'enseignant_id',
+                    $teacher->getKey(),
+                ),
+            )
+            ->with(['typeEvaluation', 'periode', 'node', 'classe', 'resultats.eleve']);
 
         if (isset($filters['classe_id'])) {
             $query->where('classe_id', $filters['classe_id']);
@@ -125,6 +134,24 @@ final class EvaluationService
         }
 
         return DB::transaction(function () use ($classe, $periode, $node, $type, $attribution, $data, $teacher): Evaluation {
+            $status = $data['statut'] ?? StatutEvaluation::Brouillon->value;
+
+            if ($status instanceof StatutEvaluation) {
+                $status = $status->value;
+            }
+
+            if (in_array($status, [
+                StatutEvaluation::Publiee->value,
+                StatutEvaluation::Verrouillee->value,
+            ], true)) {
+                $this->lockOfficialSlot(
+                    (int) $classe->tenant_id,
+                    $classe->getKey(),
+                    $node->getKey(),
+                    $periode->getKey(),
+                );
+            }
+
             $evaluation = Evaluation::query()->create([
                 'tenant_id' => $classe->tenant_id,
                 'etablissement_id' => $classe->etablissement_id,
@@ -138,7 +165,7 @@ final class EvaluationService
                 'maxima' => $data['maxima'],
                 'coefficient' => $data['coefficient'] ?? 1.00,
                 'date_evaluation' => $data['date_evaluation'],
-                'statut' => $data['statut'] ?? StatutEvaluation::Brouillon->value,
+                'statut' => $status,
                 'visible_parents_at' => $data['visible_parents_at'] ?? null,
                 'cree_par' => $teacher->getKey(),
                 'lock_version' => 1,
@@ -172,7 +199,8 @@ final class EvaluationService
 
     public function publish(Evaluation $evaluation, Utilisateur $teacher): Evaluation
     {
-        if ((int) $evaluation->etablissement_id !== $this->establishmentContext->id()) {
+        if ((int) $evaluation->etablissement_id !== $this->establishmentContext->id()
+            || ! $this->isOwnedByTeacher($evaluation, $teacher)) {
             throw (new ModelNotFoundException)->setModel(Evaluation::class, [$evaluation->getKey()]);
         }
 
@@ -192,6 +220,14 @@ final class EvaluationService
         }
 
         return DB::transaction(function () use ($evaluation, $teacher): Evaluation {
+            $evaluation = $this->lockEvaluationForProjection($evaluation);
+
+            if ($evaluation->statut !== StatutEvaluation::Brouillon) {
+                throw new EvaluationException(
+                    'Seule une évaluation en brouillon peut être publiée.',
+                );
+            }
+
             $evaluation->forceFill([
                 'statut' => StatutEvaluation::Publiee,
                 'visible_parents_at' => $evaluation->visible_parents_at ?? now(),
@@ -221,6 +257,11 @@ final class EvaluationService
      */
     public function storeResultats(Evaluation $evaluation, array $resultats, Utilisateur $teacher): int
     {
+        if ((int) $evaluation->etablissement_id !== $this->establishmentContext->id()
+            || ! $this->isOwnedByTeacher($evaluation, $teacher)) {
+            throw (new ModelNotFoundException)->setModel(Evaluation::class, [$evaluation->getKey()]);
+        }
+
         if ($evaluation->statut !== StatutEvaluation::Publiee) {
             throw new EvaluationException(
                 'Results may only be recorded for a published evaluation.',
@@ -237,6 +278,14 @@ final class EvaluationService
         }
 
         return DB::transaction(function () use ($evaluation, $resultats, $teacher): int {
+            $evaluation = $this->lockEvaluationForProjection($evaluation);
+
+            if ($evaluation->statut !== StatutEvaluation::Publiee) {
+                throw new EvaluationException(
+                    'Results may only be recorded for a published evaluation.',
+                );
+            }
+
             $inscriptionIds = collect($resultats)
                 ->pluck('inscription_id')
                 ->map(static fn (mixed $id): int => (int) $id)
@@ -340,5 +389,62 @@ final class EvaluationService
 
             return $count;
         });
+    }
+
+    private function lockEvaluationForProjection(
+        Evaluation $evaluation,
+    ): Evaluation {
+        $this->lockOfficialSlot(
+            (int) $evaluation->tenant_id,
+            (int) $evaluation->classe_id,
+            (int) $evaluation->node_id,
+            (int) $evaluation->periode_id,
+        );
+
+        return Evaluation::query()
+            ->whereKey($evaluation->getKey())
+            ->where('tenant_id', $evaluation->tenant_id)
+            ->lockForUpdate()
+            ->firstOrFail();
+    }
+
+    private function isOwnedByTeacher(
+        Evaluation $evaluation,
+        Utilisateur $teacher,
+    ): bool {
+        return AttributionCours::query()
+            ->whereKey($evaluation->attribution_cours_id)
+            ->where('tenant_id', $evaluation->tenant_id)
+            ->where('enseignant_id', $teacher->getKey())
+            ->exists();
+    }
+
+    private function lockOfficialSlot(
+        int $tenantId,
+        int $classId,
+        int $nodeId,
+        int $periodId,
+    ): ModeleMaximum {
+        $slot = ModeleMaximum::query()
+            ->where('tenant_id', $tenantId)
+            ->where('node_id', $nodeId)
+            ->where('periode_id', $periodId)
+            ->whereHas(
+                'modeleBulletin',
+                fn (Builder $query): Builder => $query->where(
+                    'classe_id',
+                    $classId,
+                ),
+            )
+            ->lockForUpdate()
+            ->first();
+
+        if (! $slot instanceof ModeleMaximum) {
+            throw new TeacherNoteEntryConflictException(
+                'Aucun créneau officiel ne correspond à cette évaluation.',
+            );
+        }
+
+        return $slot;
     }
 }

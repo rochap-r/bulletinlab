@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\Api\V1\Platform\ListPasswordResetRequestsController;
+use App\Http\Controllers\Api\V1\Platform\ResetRequestedPasswordController;
 use App\Http\Controllers\Api\V1\Platform\ResponsableMonitoringController;
 use App\Http\Controllers\Api\V1\PlatformAuth\PlatformLoginController;
 use App\Http\Controllers\Api\V1\PlatformAuth\PlatformLogoutAllController;
@@ -23,6 +25,12 @@ Route::middleware(['auth.cookie', 'auth:sanctum', 'platform', 'throttle:api'])->
 
     Route::get('platform/responsables/monitoring', ResponsableMonitoringController::class)
         ->name('platform.responsables.monitoring');
+
+    Route::get('platform/password-reset-requests', ListPasswordResetRequestsController::class)
+        ->name('platform.password-reset-requests.index');
+
+    Route::post('platform/password-reset-requests/{demande}/reset', ResetRequestedPasswordController::class)
+        ->name('platform.password-reset-requests.reset');
 
     require __DIR__.'/platform-config.php';
 });

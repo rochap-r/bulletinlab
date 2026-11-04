@@ -14,6 +14,7 @@ class TypeEvaluationSeeder extends Seeder
     {
         $types = [
             ['code' => 'INTERROGATION', 'nom' => 'Interrogation', 'description' => 'Interrogation orale ou écrite'],
+            ['code' => 'EXERCICE_DEVOIR', 'nom' => 'Exercice / Devoir', 'description' => 'Exercice en classe ou devoir à domicile'],
             ['code' => 'EXERCICE', 'nom' => 'Exercice', 'description' => 'Travail réalisé en classe'],
             ['code' => 'DEVOIR', 'nom' => 'Devoir', 'description' => 'Travail à la maison'],
             ['code' => 'CAHIER', 'nom' => 'Cahier', 'description' => 'Cotation du cahier et des exercices faits'],

@@ -5,11 +5,13 @@ namespace App\Domains\Teacher\Services;
 use App\Domains\Evaluation\Exceptions\PeriodLockedException;
 use App\Domains\Teacher\DTOs\LockedCourseAssignmentNoteContext;
 use App\Domains\Teacher\Exceptions\TeacherNoteEntryConflictException;
+use App\Enums\StatutEvaluation;
 use App\Models\AnneePeriodeMapping;
 use App\Models\AnneeScolaire;
 use App\Models\AttributionCours;
 use App\Models\CalendrierPeriode;
 use App\Models\Classe;
+use App\Models\Evaluation;
 use App\Models\ModeleBulletin;
 use App\Models\ModeleMaximum;
 use App\Models\ModeleNode;
@@ -44,6 +46,7 @@ final class LockMyCourseAssignmentNoteContextService
         );
         $this->lockOpenPeriodState($schoolClass, $lockedSlot);
         $this->lockCurrentAssignment($assignment, $teacher, $today);
+        $this->assertDirectEntryMode($schoolClass, $course, $lockedSlot);
 
         return new LockedCourseAssignmentNoteContext(
             schoolClass: $schoolClass,
@@ -253,6 +256,32 @@ final class LockMyCourseAssignmentNoteContextService
             || $currentAssignments->first()?->enseignant_id !== $teacher->getKey()) {
             throw new TeacherNoteEntryConflictException(
                 'The course assignment is no longer current.',
+            );
+        }
+    }
+
+    private function assertDirectEntryMode(
+        Classe $schoolClass,
+        ModeleNode $course,
+        ModeleMaximum $slot,
+    ): void {
+        $evaluation = Evaluation::query()
+            ->select('id')
+            ->where('tenant_id', $schoolClass->tenant_id)
+            ->where('classe_id', $schoolClass->getKey())
+            ->where('node_id', $course->getKey())
+            ->where('periode_id', $slot->periode_id)
+            ->whereIn('statut', [
+                StatutEvaluation::Publiee->value,
+                StatutEvaluation::Verrouillee->value,
+            ])
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->first();
+
+        if ($evaluation instanceof Evaluation) {
+            throw new TeacherNoteEntryConflictException(
+                'Cette période est pilotée par les évaluations. Saisissez les résultats depuis l’espace Évaluations.',
             );
         }
     }

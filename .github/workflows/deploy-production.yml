@@ -190,6 +190,36 @@ jobs:
       - name: Build ${{ matrix.service }} image
         run: docker compose --env-file .env.production build --pull ${{ matrix.service }}
 
+      - name: Verify PHP file readability in API image
+        if: matrix.service == 'api'
+        run: |
+          docker run --rm \
+            --user www-data \
+            --entrypoint php \
+            bulletinlab/api:scan \
+            -r '
+              $files = [
+                "/var/www/html/config/database.php",
+                "/var/www/html/app/Http/Resources/Api/V1/Platform/Configuration/ConfigurationBulletinResource.php",
+                "/var/www/html/routes/api.php",
+                "/var/www/html/bootstrap/app.php",
+                "/var/www/html/database/seeders/DatabaseSeeder.php",
+                "/var/www/html/resources/views/welcome.blade.php",
+                "/var/www/html/public/index.php",
+                "/var/www/html/vendor/autoload.php",
+                "/var/www/html/artisan",
+              ];
+
+              foreach ($files as $file) {
+                if (! is_readable($file)) {
+                  fwrite(STDERR, "Fichier illisible : {$file}\n");
+                  exit(1);
+                }
+              }
+
+              echo "Permissions PHP vérifiées\n";
+            '
+
       - name: Scan ${{ matrix.service }} image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

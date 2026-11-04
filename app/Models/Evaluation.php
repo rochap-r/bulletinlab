@@ -31,8 +31,10 @@ class Evaluation extends Model
         'node_id',
         'periode_id',
         'type_evaluation_id',
+        'composante_modele',
         'libelle',
         'maxima',
+        'maxima_bulletin',
         'coefficient',
         'date_evaluation',
         'statut',
@@ -43,6 +45,7 @@ class Evaluation extends Model
 
     protected $casts = [
         'maxima' => 'decimal:2',
+        'maxima_bulletin' => 'decimal:2',
         'coefficient' => 'decimal:2',
         'date_evaluation' => 'date',
         'statut' => StatutEvaluation::class,
@@ -111,7 +114,9 @@ class Evaluation extends Model
         return [
             'maxima' => $maxima,
             'coefficient' => $coefficient,
-            'pondered_maxima' => round($maxima * $coefficient, 2),
+            'pondered_maxima' => $this->maxima_bulletin !== null
+                ? (float) $this->maxima_bulletin
+                : round($maxima * $coefficient, 2),
         ];
     }
 }

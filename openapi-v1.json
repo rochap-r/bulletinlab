@@ -2774,6 +2774,7 @@
                                     "maximum": "20.00",
                                     "coefficient": "1.00",
                                     "verrouille": false,
+                                    "mode_saisie": "DIRECTE",
                                     "saisie_autorisee": true
                                 }
                             ],
@@ -2853,6 +2854,7 @@
                                 "maximum": "20.00",
                                 "coefficient": "1.00",
                                 "verrouille": false,
+                                "mode_saisie": "DIRECTE",
                                 "saisie_autorisee": true
                             },
                             "links": {
@@ -4572,6 +4574,7 @@
                     "maximum",
                     "coefficient",
                     "verrouille",
+                    "mode_saisie",
                     "saisie_autorisee"
                 ],
                 "properties": {
@@ -4624,9 +4627,17 @@
                     "verrouille": {
                         "type": "boolean"
                     },
+                    "mode_saisie": {
+                        "type": "string",
+                        "enum": [
+                            "DIRECTE",
+                            "EVALUATIONS"
+                        ],
+                        "description": "Single source of truth for the period grade: direct entry or projection from published evaluations."
+                    },
                     "saisie_autorisee": {
                         "type": "boolean",
-                        "description": "True only when the period is saisissable, not locked and currently inside its school calendar window."
+                        "description": "True only for direct entry when the period is saisissable, not locked and currently inside its school calendar window."
                     }
                 }
             },

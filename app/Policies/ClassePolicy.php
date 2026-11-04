@@ -19,7 +19,10 @@ final class ClassePolicy
         return $classe->active
             && $utilisateur->etablissement_id === $classe->etablissement_id
             && $classe->titulaire_id === $utilisateur->getKey()
-            && $utilisateur->hasTenantRole(['ENSEIGNANT', 'TITULAIRE'], $classe->tenant_id)
+            && $utilisateur->hasTenantRole(
+                ['ENSEIGNANT', 'TITULAIRE'],
+                $classe->tenant_id,
+            )
             && $this->resolveEstablishment($utilisateur, $classe) !== null;
     }
 
@@ -127,7 +130,11 @@ final class ClassePolicy
             return false;
         }
 
-        if ($classe->titulaire_id === $utilisateur->getKey()) {
+        if ($classe->titulaire_id === $utilisateur->getKey()
+            && $utilisateur->hasTenantRole(
+                ['ENSEIGNANT', 'TITULAIRE'],
+                $classe->tenant_id,
+            )) {
             return true;
         }
 
