@@ -220,6 +220,16 @@ jobs:
               echo "Permissions PHP vérifiées\n";
             '
 
+      - name: Report ${{ matrix.service }} image vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          scan-ref: bulletinlab/${{ matrix.service }}:scan
+          format: table
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: '0'
+
       - name: Scan ${{ matrix.service }} image with Trivy
         uses: aquasecurity/trivy-action@v0.36.0
         with:

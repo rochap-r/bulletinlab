@@ -52,7 +52,11 @@ FROM php:8.4-fpm
 # pdo_pgsql (PostgreSQL), zip (maatwebsite/excel), bcmath (calculs décimaux),
 # pcntl (workers queue: signaux), opcache (perf), redis (cache/queue/sessions),
 # gd (phpoffice/phpspreadsheet : images dans les fichiers Excel), intl (i18n)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# L'image officielle peut précéder la publication de correctifs Debian.
+# Met à niveau les paquets du runtime avant le contrôle Trivy.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends \
         $PHPIZE_DEPS \
         libzip-dev \
         libpq-dev \
